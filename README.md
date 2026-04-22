@@ -1,5 +1,7 @@
 # ICL vs. In-Place TTT for Long-Context Recall in Modern Transformers
 
+[Original Paper](https://arxiv.org/pdf/2604.06169)
+
 ## Motivation
 Large language models operate under a "train then freeze" paradigm, relying entirely on their fixed context window to process new information at inference time. In-Context Learning (ICL) places this information directly in the prompt, but performance degrades as context length grows. In-Place Test-Time Training (In-Place TTT), Feng et al. offers an alternative: compress context into the model's weights at inference by treating MLP output projection matrices as adaptable fast weights updated via a next-token-prediction-aligned objective. 
 
@@ -18,10 +20,10 @@ We will test across context lengths from 1K to 32K tokens on RULER-style tasks (
 NOTE: We could also just follow the approach of using NVIDIA RULER  in the original paper
 
 ## Visualizations
-Accuracy vs. context length (per task type)
-Memory usage vs. context length
-Inference latency vs. context length
-Needle position × accuracy heatmap
+- Accuracy vs. context length (per task type)
+- Memory usage vs. context length
+- Inference latency vs. context length
+- Needle position × accuracy heatmap
 
 ## Tech Stack
 PyTorch, HuggingFace Transformers, NVIDIA RULER, Datasets, W&B
@@ -31,6 +33,9 @@ We expect ICL to outperform In-Place TTT at short contexts, with In-Place TTT be
 
 ## Class Information
 Chang Min and Hung Ngo
+
 CSCI357 (Spring 2026) - AI with Neural Nets
+
 Professor Brian King
+
 April 21, 2026
