@@ -6,9 +6,17 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "datasets>=4.8.4",
+    "einops>=0.8.2",
+    "opt-einsum>=3.4.0",
     "packaging>=26.1",
     "setuptools>=81.0.0",
+    "torch>=2.11.0",
     "torchdata>=0.11.0",
     "transformers>=5.6.2",
     "wandb>=0.26.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
 ]

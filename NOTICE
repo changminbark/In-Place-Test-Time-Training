@@ -1,0 +1,28 @@
+In-Place Test-Time Training
+Copyright 2026 Chang Min Bark and Hung Ngo
+
+This product includes software developed as part of the following projects:
+
+- HuggingFace Transformers (https://github.com/huggingface/transformers)
+  Copyright 2018- The HuggingFace Inc. team.
+  Licensed under the Apache License, Version 2.0.
+
+  Files in `models/` are derivative works of
+  `transformers/models/gemma3/modeling_gemma3.py` and
+  `transformers/models/gemma3/configuration_gemma3.py`. They have been
+  modified to add In-Place Test-Time Training (TTT) adapter modules
+  (Conv1D + W_target) to the MLP and a frozen-base training mode.
+
+- Gemma 3 model architecture and weights (https://ai.google.dev/gemma)
+  Copyright 2025 Google LLC.
+  Use of the Gemma model weights is subject to the Gemma Terms of Use
+  (https://ai.google.dev/gemma/terms). This repository does not redistribute
+  Gemma weights; users must obtain them directly from Google / HuggingFace.
+
+- In-Place Test-Time Training, Feng et al.
+  (https://github.com/bytedance/In-Place-TTT)
+  Copyright 2026 Bytedance Ltd. and/or its affiliates.
+  Licensed under the Apache License, Version 2.0.
+
+  The TTT MLP, decoder layer, and weight-init logic are adapted from the
+  reference implementation in that repository.
