@@ -221,8 +221,12 @@ def train_on_dataset(
     batch_size: int,
     grad_accum: int,
     lr: float,
+    weight_decay: float,
+    warmup_steps: int,
+    max_grad_norm: float,
     bf16: bool,
     save_steps: int,
+    logging_steps: int,
     use_wandb: bool,
 ) -> None:
     collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
@@ -233,9 +237,13 @@ def train_on_dataset(
         gradient_accumulation_steps=grad_accum,
         learning_rate=lr,
         lr_scheduler_type="cosine",
-        warmup_ratio=0.03,
-        weight_decay=0.0,
-        logging_steps=10,
+        warmup_steps=warmup_steps,
+        weight_decay=weight_decay,
+        max_grad_norm=max_grad_norm,
+        adam_beta1=0.9,
+        adam_beta2=0.95,
+        logging_steps=logging_steps,
+        logging_first_step=True,
         save_steps=save_steps,
         save_total_limit=2,
         bf16=bf16,
@@ -257,21 +265,35 @@ def train_on_dataset(
 # Entrypoint
 # ---------------------------------------------------------------------------
 
-# Per-dataset defaults tuned to each dataset's typical length distribution.
+# Per-dataset defaults tuned for *adapter pretraining* (frozen 1B base, only
+# ttt_conv + ttt_proj + down_proj receive gradients). Conventions:
+#   - higher LR than SFT (newly-init adapters need to move),
+#   - cosine schedule with a fixed-step warmup (not warmup_ratio),
+#   - mild weight decay (0.1) and grad clipping (1.0),
+#   - effective batch size = batch_size * grad_accum, sized so each step
+#     processes ~32–64 long-context examples (pretraining-typical),
+#   - 1 epoch over a large corpus; LongAlpaca only has 12k samples so it gets
+#     more passes.
 DATASET_DEFAULTS = {
     "tinystories": {
         "max_length": 1024,
-        "batch_size": 4,
-        "grad_accum": 4,
-        "lr": 5e-5,
+        "batch_size": 8,
+        "grad_accum": 8,           # effective batch 64
+        "lr": 1e-4,
         "epochs": 1.0,
+        "weight_decay": 0.1,
+        "warmup_steps": 500,
+        "max_grad_norm": 1.0,
     },
     "longalpaca": {
-        "max_length": 8192,
+        "max_length": 4096,        # 8k OOMs on most consumer GPUs
         "batch_size": 1,
-        "grad_accum": 8,
+        "grad_accum": 16,          # effective batch 16
         "lr": 5e-5,
-        "epochs": 1.0,
+        "epochs": 2.0,             # 12k examples; one epoch is too short
+        "weight_decay": 0.1,
+        "warmup_steps": 100,
+        "max_grad_norm": 1.0,
     },
 }
 
@@ -300,10 +322,16 @@ def parse_args():
     p.add_argument("--batch-size", type=int, default=None)
     p.add_argument("--grad-accum", type=int, default=None)
     p.add_argument("--lr", type=float, default=None)
+    p.add_argument("--weight-decay", type=float, default=None)
+    p.add_argument("--warmup-steps", type=int, default=None)
+    p.add_argument("--max-grad-norm", type=float, default=None)
     p.add_argument("--max-length", type=int, default=None)
     p.add_argument("--max-samples", type=int, default=None)
 
     p.add_argument("--save-steps", type=int, default=500)
+    p.add_argument("--logging-steps", type=int, default=10,
+                   help="How often (in steps) to log loss/lr to console + wandb. "
+                        "Lower this for short runs so metrics actually reach wandb.")
     p.add_argument("--no-bf16", action="store_true")
     p.add_argument("--no-push", action="store_true")
     p.add_argument("--repo-id", default=None,
@@ -330,6 +358,9 @@ def main():
     batch_size = _resolve(args.batch_size, defaults["batch_size"])
     grad_accum = _resolve(args.grad_accum, defaults["grad_accum"])
     lr = _resolve(args.lr, defaults["lr"])
+    weight_decay = _resolve(args.weight_decay, defaults["weight_decay"])
+    warmup_steps = _resolve(args.warmup_steps, defaults["warmup_steps"])
+    max_grad_norm = _resolve(args.max_grad_norm, defaults["max_grad_norm"])
     max_length = _resolve(args.max_length, defaults["max_length"])
 
     output_dir = Path(args.output_dir) / args.dataset
@@ -362,8 +393,12 @@ def main():
         batch_size=batch_size,
         grad_accum=grad_accum,
         lr=lr,
+        weight_decay=weight_decay,
+        warmup_steps=warmup_steps,
+        max_grad_norm=max_grad_norm,
         bf16=bf16,
         save_steps=args.save_steps,
+        logging_steps=args.logging_steps,
         use_wandb=use_wandb,
     )
 

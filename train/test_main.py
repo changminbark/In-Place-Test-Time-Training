@@ -360,8 +360,12 @@ def test_train_on_dataset_runs_one_step(gpt2_tokenizer, tmp_path: Path):
         batch_size=2,
         grad_accum=1,
         lr=1e-4,
+        weight_decay=0.1,
+        warmup_steps=0,
+        max_grad_norm=1.0,
         bf16=False,            # CPU-friendly
         save_steps=10_000,     # avoid intermediate saves
+        logging_steps=1,
         use_wandb=False,
     )
 
