@@ -17,7 +17,8 @@
 # Modifications Copyright 2026 Chang Min Bark and Hung Ngo.                                                                    
 # Modifications add In-Place Test-Time Training (TTT) adapter modules                                                          
 # (Conv1D + W_target) to the MLP and a frozen-base training mode.
-from typing import Optional, Union
+from dataclasses import dataclass
+from typing import Dict, Optional, Union
 
 import torch
 from torch import nn
@@ -48,6 +49,20 @@ from einops import rearrange, repeat
 from opt_einsum import contract
 
 from .config_gemma3 import Gemma3TTTConfig
+
+
+# Output dataclasses extending HF outputs with a per-layer fast-weight snapshot.
+# `fast_weights` is a dict {layer_idx: tensor of shape (B, d, d_ff)} containing
+# the cumulative (un-scaled) per-chunk ΔW captured during a forward where
+# `return_fast_weights=True`. The η factor is applied at consumption, not here.
+@dataclass
+class Gemma3TTTBaseModelOutput(BaseModelOutputWithPast):
+    fast_weights: Optional[Dict[int, torch.Tensor]] = None
+
+
+@dataclass
+class Gemma3TTTCausalLMOutput(CausalLMOutputWithPast):
+    fast_weights: Optional[Dict[int, torch.Tensor]] = None
 
 
 # Marker subclasses so _init_weights can identify TTT modules unambiguously
@@ -91,40 +106,109 @@ class Gemma3MLPTTT(Gemma3MLP):
         return rearrange(x, "b (t c) d -> b t c d", c=self.ttt_chunk)
         
     # TTT forward
-    def forward(self, x: torch.Tensor, t: Optional[torch.Tensor] = None):
+    #
+    # Three call modes:
+    #   1. Vanilla / paper-style (default): forward(x, t) -> Tensor.
+    #      Identical to the original implementation. Used by ICL and ttt_paper.
+    #   2. Snapshot producer (strict ingest): forward(x, t, return_fast_weights=True)
+    #      -> (Tensor, fw). Runs paper-style chunked update, additionally returns
+    #      `fw` of shape (B, d, d_ff) — the un-scaled cumulative ΔW across ALL
+    #      chunks of this input (no causal exclusion of the last chunk, since for
+    #      ingest there is no "future" beyond the doc). η is NOT pre-multiplied.
+    #   3. Snapshot consumer (strict answer): forward(x, t, fast_weights=fw)
+    #      -> Tensor (or (Tensor, fw_passthrough) if return_fast_weights=True).
+    #      Skips per-chunk evolution; uses W_eff = W_down + η * fw uniformly for
+    #      every position. Question's own tokens contribute zero new ΔW.
+    def forward(
+        self,
+        x: torch.Tensor,
+        t: Optional[torch.Tensor] = None,
+        *,
+        fast_weights: Optional[torch.Tensor] = None,
+        return_fast_weights: bool = False,
+    ):
         # Input embedding
         z = self.act_fn(self.gate_proj(x)) * self.up_proj(x)
-        
-        # Vanilla Path
+
+        # Vanilla path (no TTT conv module, e.g. layer is not in ttt_layers).
         if t is None or not hasattr(self, "ttt_conv"):
-            return self.down_proj(z)
-        
-        # TTT Path
-        t = self.padding(t) # shape: (batch_size, chunk_num, chunk_size, d_model)
-        z_padded = self.padding(z) # shape: (batch_size, chunk_num, chunk_size, d_ff)
+            out = self.down_proj(z)
+            if return_fast_weights or fast_weights is not None:
+                return out, None
+            return out
+
+        # Snapshot consumer path: use the supplied fast_weights uniformly.
+        # fast_weights expected shape (d, d_ff) or (B, d, d_ff). η applied here.
+        # Always return a tuple in the strict path so the caller's unpack works
+        # regardless of whether `return_fast_weights` is set.
+        if fast_weights is not None:
+            scaled = self.ttt_lr * fast_weights
+            base = self.down_proj.weight  # (d, d_ff)
+            if scaled.dim() == 2:
+                W_eff = base + scaled                                # (d, d_ff)
+                out = z @ W_eff.T                                    # (B, N, d)
+            elif scaled.dim() == 3:
+                # Per-batch effective W_down.
+                W_eff = base.unsqueeze(0) + scaled                   # (B, d, d_ff)
+                out = torch.einsum("bnf,bdf->bnd", z, W_eff)         # (B, N, d)
+            else:
+                raise ValueError(f"fast_weights must be 2D or 3D, got {scaled.dim()}D")
+            # Pass the (un-modified) snapshot back when capture was requested,
+            # else None — keeps the result schema consistent with the producer
+            # path while signaling that no new snapshot was computed.
+            return out, (fast_weights if return_fast_weights else None)
+
+        # Paper-style chunk-wise update path.
+        t = self.padding(t)        # (B, T, C, d)
+        z_padded = self.padding(z) # (B, T, C, d_ff)
         bs, chunk_num, chunk_size, _ = t.shape
         t = (
-            self.ttt_conv(t.transpose(-1, -2).reshape(bs * chunk_num, -1, chunk_size)) # conv across d_model channels for chunk_size 
+            self.ttt_conv(t.transpose(-1, -2).reshape(bs * chunk_num, -1, chunk_size))
             .transpose(-1, -2)
             .reshape(bs, chunk_num, chunk_size, -1)
         )
         if self.ttt_proj is not None:
-            delta_down_proj = contract(
+            # Per-chunk un-scaled ΔW (b, t, d, d_ff). Causal exclusion of last
+            # chunk is enforced by the [:, :-1] slice — preserves paper math.
+            delta_per_chunk_excl = contract(
                 "b t c h, b t c d, d e -> b t e h",
                 z_padded[:, :-1], t[:, :-1], self.ttt_proj.weight,
             )
         else:
-            delta_down_proj = contract(
+            delta_per_chunk_excl = contract(
                 "b t c h, b t c d -> b t d h",
                 z_padded[:, :-1], t[:, :-1],
             )
         delta_down_proj = torch.cat(
-            [repeat(self.down_proj.weight, "d h -> b 1 d h", b=bs), delta_down_proj * self.ttt_lr],
+            [
+                repeat(self.down_proj.weight, "d h -> b 1 d h", b=bs),
+                delta_per_chunk_excl * self.ttt_lr,
+            ],
             dim=1,
         )
         delta_down_proj_sum = delta_down_proj.cumsum(dim=1)
         down_proj = contract("b t d h, b t c h -> b t c d", delta_down_proj_sum, z_padded)
-        return rearrange(down_proj, "b t c d -> b (t c) d")[:, : x.shape[1], :] # shape: (batch, seq_len, d_model)
+        out = rearrange(down_proj, "b t c d -> b (t c) d")[:, : x.shape[1], :]
+
+        if not return_fast_weights:
+            return out
+
+        # Build the un-scaled snapshot summing ΔW across ALL chunks (incl. last).
+        # delta_per_chunk_excl already covers chunks 0..T-2; compute chunk T-1
+        # and add it. Skipping the last chunk's contribution would lose the tail
+        # of the doc — undesirable for ingest where there is no "future".
+        if self.ttt_proj is not None:
+            last_delta = contract(
+                "b c h, b c d, d e -> b e h",
+                z_padded[:, -1], t[:, -1], self.ttt_proj.weight,
+            )
+        else:
+            last_delta = contract(
+                "b c h, b c d -> b d h",
+                z_padded[:, -1], t[:, -1],
+            )
+        snapshot = delta_per_chunk_excl.sum(dim=1) + last_delta      # (B, d, d_ff)
+        return out, snapshot
 
 class Gemma3DecoderLayerTTT(Gemma3DecoderLayer):
     def __init__(self, config: Gemma3TTTConfig, layer_idx: int):
@@ -141,6 +225,8 @@ class Gemma3DecoderLayerTTT(Gemma3DecoderLayer):
         position_ids: torch.LongTensor | None = None,
         past_key_values: Cache | None = None,
         target_states: torch.Tensor | None = None,
+        fast_weights: torch.Tensor | None = None,
+        return_fast_weights: bool = False,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.FloatTensor, tuple[torch.FloatTensor, torch.FloatTensor] | None]:
         residual = hidden_states
@@ -160,13 +246,31 @@ class Gemma3DecoderLayerTTT(Gemma3DecoderLayer):
 
         residual = hidden_states
         hidden_states = self.pre_feedforward_layernorm(hidden_states)
-        # TTT MLP 
+        # TTT MLP
         if self.is_ttt_layer and target_states is None:
             target_states = hidden_states
-        hidden_states = self.mlp(hidden_states, t=target_states)
+
+        # Only invoke the tuple-returning MLP path when the caller explicitly
+        # asked for snapshot capture or supplied a snapshot to consume.
+        # Otherwise we keep the original single-tensor return shape — preserving
+        # the paper-style hot path and existing call sites unchanged.
+        wants_strict = self.is_ttt_layer and (return_fast_weights or fast_weights is not None)
+        if wants_strict:
+            hidden_states, fw_out = self.mlp(
+                hidden_states,
+                t=target_states,
+                fast_weights=fast_weights,
+                return_fast_weights=return_fast_weights,
+            )
+        else:
+            hidden_states = self.mlp(hidden_states, t=target_states)
+            fw_out = None
+
         hidden_states = self.post_feedforward_layernorm(hidden_states)
         hidden_states = residual + hidden_states
 
+        if return_fast_weights or fast_weights is not None:
+            return hidden_states, fw_out
         return hidden_states
 
 
@@ -300,6 +404,8 @@ class Gemma3TextModelTTT(Gemma3PreTrainedModelTTT):
         past_key_values: Cache | None = None,
         inputs_embeds: torch.FloatTensor | None = None,
         use_cache: bool | None = None,
+        fast_weights: Optional[Dict[int, torch.Tensor]] = None,
+        return_fast_weights: bool = False,
         **kwargs: Unpack[TransformersKwargs],
     ) -> BaseModelOutputWithPast:
         if (input_ids is None) ^ (inputs_embeds is not None):
@@ -344,22 +450,60 @@ class Gemma3TextModelTTT(Gemma3PreTrainedModelTTT):
         for layer_type in set(self.config.layer_types):
             position_embeddings[layer_type] = self.rotary_emb(hidden_states, position_ids, layer_type)
 
+        # If the caller wants per-layer fast-weight snapshots back, allocate the
+        # collector dict. Only TTT layers will populate it.
+        out_fast_weights: Optional[Dict[int, torch.Tensor]] = (
+            {} if return_fast_weights else None
+        )
+
         for i, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
-            hidden_states = decoder_layer(
-                hidden_states,
-                attention_mask=causal_mask_mapping[self.config.layer_types[i]],
-                position_embeddings=position_embeddings[self.config.layer_types[i]],
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                target_states=self._resolve_ttt_target_states(decoder_layer, inputs_embeds),
-                **kwargs,
+            # Per-layer snapshot to consume (only meaningful on TTT layers).
+            in_fw = None
+            if fast_weights is not None and getattr(decoder_layer, "is_ttt_layer", False):
+                in_fw = fast_weights.get(i)
+
+            wants_strict = getattr(decoder_layer, "is_ttt_layer", False) and (
+                return_fast_weights or in_fw is not None
             )
+
+            if wants_strict:
+                hidden_states, fw_out = decoder_layer(
+                    hidden_states,
+                    attention_mask=causal_mask_mapping[self.config.layer_types[i]],
+                    position_embeddings=position_embeddings[self.config.layer_types[i]],
+                    position_ids=position_ids,
+                    past_key_values=past_key_values,
+                    target_states=self._resolve_ttt_target_states(decoder_layer, inputs_embeds),
+                    fast_weights=in_fw,
+                    return_fast_weights=return_fast_weights,
+                    **kwargs,
+                )
+                if out_fast_weights is not None and fw_out is not None:
+                    out_fast_weights[i] = fw_out
+            else:
+                hidden_states = decoder_layer(
+                    hidden_states,
+                    attention_mask=causal_mask_mapping[self.config.layer_types[i]],
+                    position_embeddings=position_embeddings[self.config.layer_types[i]],
+                    position_ids=position_ids,
+                    past_key_values=past_key_values,
+                    target_states=self._resolve_ttt_target_states(decoder_layer, inputs_embeds),
+                    **kwargs,
+                )
 
         hidden_states = self.norm(hidden_states)
 
-        return BaseModelOutputWithPast(
+        # When neither strict kwarg is in play, return the original output type
+        # so existing callers see no schema change.
+        if not return_fast_weights and fast_weights is None:
+            return BaseModelOutputWithPast(
+                last_hidden_state=hidden_states,
+                past_key_values=past_key_values,
+            )
+        return Gemma3TTTBaseModelOutput(
             last_hidden_state=hidden_states,
             past_key_values=past_key_values,
+            fast_weights=out_fast_weights,
         )
 
 
@@ -394,6 +538,8 @@ class Gemma3ForCausalLMTTT(Gemma3PreTrainedModelTTT, GenerationMixin):
         labels: torch.LongTensor | None = None,
         use_cache: bool | None = None,
         logits_to_keep: Union[int, torch.Tensor] = 0,
+        fast_weights: Optional[Dict[int, torch.Tensor]] = None,
+        return_fast_weights: bool = False,
         **kwargs: Unpack[TransformersKwargs],
     ) -> CausalLMOutputWithPast:
         outputs: BaseModelOutputWithPast = self.model(
@@ -403,6 +549,8 @@ class Gemma3ForCausalLMTTT(Gemma3PreTrainedModelTTT, GenerationMixin):
             past_key_values=past_key_values,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
+            fast_weights=fast_weights,
+            return_fast_weights=return_fast_weights,
             **kwargs,
         )
 
@@ -419,12 +567,24 @@ class Gemma3ForCausalLMTTT(Gemma3PreTrainedModelTTT, GenerationMixin):
         if labels is not None:
             loss = self.loss_function(logits, labels, self.vocab_size, **kwargs)
 
-        return CausalLMOutputWithPast(
+        # Preserve original output schema for existing callers; only switch to
+        # the TTT-extended output type when the strict kwargs are in play.
+        captured_fw = getattr(outputs, "fast_weights", None)
+        if not return_fast_weights and fast_weights is None:
+            return CausalLMOutputWithPast(
+                loss=loss,
+                logits=logits,
+                past_key_values=outputs.past_key_values,
+                hidden_states=outputs.hidden_states,
+                attentions=outputs.attentions,
+            )
+        return Gemma3TTTCausalLMOutput(
             loss=loss,
             logits=logits,
             past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
+            fast_weights=captured_fw,
         )
 
 
@@ -432,4 +592,6 @@ __all__ = [
     "Gemma3PreTrainedModelTTT",
     "Gemma3TextModelTTT",
     "Gemma3ForCausalLMTTT",
+    "Gemma3TTTBaseModelOutput",
+    "Gemma3TTTCausalLMOutput",
 ]

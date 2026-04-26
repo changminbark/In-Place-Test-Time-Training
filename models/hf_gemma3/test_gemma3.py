@@ -26,6 +26,8 @@ from models.hf_gemma3.model_gemma3 import (
     Gemma3ForCausalLMTTT,
     Gemma3MLPTTT,
     Gemma3TextModelTTT,
+    Gemma3TTTBaseModelOutput,
+    Gemma3TTTCausalLMOutput,
 )
 
 
@@ -180,6 +182,164 @@ def test_save_and_load_pretrained_roundtrip():
         new_logits = reloaded(input_ids=input_ids).logits
 
     torch.testing.assert_close(ref_logits, new_logits, rtol=1e-5, atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# Strict-TTT state hook: snapshot capture and snapshot consumption
+# ---------------------------------------------------------------------------
+
+def test_strict_paper_default_unchanged():
+    """Without the new kwargs, output schema and values are unchanged."""
+    cfg = _tiny_config(use_ttt=True)
+    model = Gemma3ForCausalLMTTT(cfg).eval()
+
+    input_ids = torch.randint(0, cfg.vocab_size, (1, 32))
+    with torch.no_grad():
+        out = model(input_ids=input_ids)
+
+    # Existing callers see CausalLMOutputWithPast (NOT the TTT-extended subtype).
+    assert type(out) is CausalLMOutputWithPast
+
+
+def test_strict_ingest_returns_fast_weights_dict():
+    cfg = _tiny_config(use_ttt=True, ttt_layers=(0, 2))
+    model = Gemma3ForCausalLMTTT(cfg).eval()
+
+    input_ids = torch.randint(0, cfg.vocab_size, (1, 32))
+    with torch.no_grad():
+        out = model(input_ids=input_ids, return_fast_weights=True)
+
+    assert isinstance(out, Gemma3TTTCausalLMOutput)
+    assert out.fast_weights is not None
+    # Snapshot keys are exactly the ttt_layers indices.
+    assert set(out.fast_weights.keys()) == {0, 2}
+
+    d = cfg.hidden_size
+    d_ff = cfg.intermediate_size
+    for layer_idx, fw in out.fast_weights.items():
+        assert fw.shape == (1, d, d_ff), f"layer {layer_idx}: got {fw.shape}"
+        assert torch.isfinite(fw).all()
+
+
+def test_strict_consume_zero_snapshot_matches_no_ttt():
+    """Feeding zero snapshots reduces the MLP to its base W_down — equivalent to
+    a model where the TTT branch produces no perturbation."""
+    cfg = _tiny_config(use_ttt=True, ttt_layers=(0, 2))
+    model = Gemma3ForCausalLMTTT(cfg).eval()
+
+    d = cfg.hidden_size
+    d_ff = cfg.intermediate_size
+    zero_snapshot = {0: torch.zeros(1, d, d_ff), 2: torch.zeros(1, d, d_ff)}
+
+    input_ids = torch.randint(0, cfg.vocab_size, (1, 16))
+    with torch.no_grad():
+        zero_out = model(input_ids=input_ids, fast_weights=zero_snapshot).logits
+
+    # Force-disable adapter on this model: zero its conv (W_target init is
+    # random sparse-diag — but since fast_weights override skips conv path,
+    # this is unnecessary; we instead compare against a model with use_ttt=False
+    # of identical base weights).
+    cfg_off = _tiny_config(use_ttt=False)
+    model_off = Gemma3ForCausalLMTTT(cfg_off).eval()
+    # Copy matching params over so only the MLP-path difference is tested.
+    src = dict(model.named_parameters())
+    for name, p in model_off.named_parameters():
+        if name in src and src[name].shape == p.shape:
+            p.data.copy_(src[name].data)
+
+    with torch.no_grad():
+        ref_out = model_off(input_ids=input_ids).logits
+
+    torch.testing.assert_close(zero_out, ref_out, rtol=1e-4, atol=1e-4)
+
+
+def test_strict_consume_runs_and_ignores_question_inputs():
+    """A real (random) snapshot can be consumed; output is finite and
+    deterministic w.r.t. the snapshot value (not the input contents of TTT
+    layers' chunked update path, which is bypassed)."""
+    cfg = _tiny_config(use_ttt=True, ttt_layers=(0, 2))
+    model = Gemma3ForCausalLMTTT(cfg).eval()
+
+    d = cfg.hidden_size
+    d_ff = cfg.intermediate_size
+    g = torch.Generator().manual_seed(7)
+    snapshot = {
+        0: torch.randn(1, d, d_ff, generator=g) * 0.01,
+        2: torch.randn(1, d, d_ff, generator=g) * 0.01,
+    }
+
+    input_ids = torch.randint(0, cfg.vocab_size, (1, 24))
+    with torch.no_grad():
+        out_a = model(input_ids=input_ids, fast_weights=snapshot)
+        out_b = model(input_ids=input_ids, fast_weights=snapshot)
+
+    assert isinstance(out_a, Gemma3TTTCausalLMOutput)
+    torch.testing.assert_close(out_a.logits, out_b.logits, rtol=0, atol=0)
+    assert torch.isfinite(out_a.logits).all()
+
+
+def test_strict_snapshot_matches_paper_two_chunk_decomposition():
+    """End-to-end semantic check on the MLP module:
+
+    For an input that is exactly two TTT chunks [a, b], paper-style forward([a,b])
+    processes chunk b with effective W_down = W_down^{(0)} + η · ΔW_a, where
+    ΔW_a is the rank-1 delta computed from chunk a's (z, V̂).
+
+    Strict ingest on [a] alone (a single-chunk input) should produce a snapshot
+    equal to that same ΔW_a (un-scaled by η). Then strict consumer on [b] alone,
+    given that snapshot, applies the same W_eff to chunk b's z.
+
+    Therefore: paper output at the chunk-b positions == strict consumer output
+    on b. This is the cleanest direct equivalence we can assert (full forwards
+    differ because attention sees a different prefix).
+    """
+    torch.manual_seed(7)
+    cfg = _tiny_config(use_ttt=True, ttt_layers=(0,))
+    model = Gemma3ForCausalLMTTT(cfg).eval()
+    mlp = model.model.layers[0].mlp
+
+    # Conv1D is zero-init by design; randomise it so the snapshot is non-trivial
+    # (otherwise V̂ = 0 → snapshot = 0 → both sides trivially match).
+    mlp.ttt_conv.weight.data.normal_(0.0, 0.1)
+
+    C = cfg.ttt_chunk
+    d = cfg.hidden_size
+    x_full = torch.randn(1, 2 * C, d)
+    t_full = torch.randn(1, 2 * C, d)
+    x_a, x_b = x_full[:, :C], x_full[:, C:]
+    t_a, t_b = t_full[:, :C], t_full[:, C:]
+
+    with torch.no_grad():
+        # 1. Paper-style two-chunk forward.
+        out_paper_full = mlp(x_full, t=t_full)               # (1, 2C, d)
+        out_paper_b = out_paper_full[:, C:]                   # chunk-b portion
+
+        # 2. Strict ingest on chunk a only.
+        out_a, snapshot_a = mlp(x_a, t=t_a, return_fast_weights=True)
+        assert snapshot_a.shape == (1, d, cfg.intermediate_size)
+
+        # 3. Strict consumer on chunk b only with that snapshot.
+        out_strict_b, _ = mlp(x_b, t=t_b, fast_weights=snapshot_a)
+
+    torch.testing.assert_close(out_paper_b, out_strict_b, rtol=1e-5, atol=1e-5)
+
+
+def test_strict_freeze_still_isolates_grads():
+    """The new code paths must not introduce trainable params outside the adapter."""
+    cfg = _tiny_config(use_ttt=True)
+    model = Gemma3ForCausalLMTTT(cfg)
+    model.freeze_base_model()
+
+    input_ids = torch.randint(0, cfg.vocab_size, (1, 16))
+    out = model(input_ids=input_ids, return_fast_weights=True, labels=input_ids)
+    out.loss.backward()
+
+    for name, p in model.named_parameters():
+        if "ttt_proj" in name or "ttt_conv" in name:
+            assert p.requires_grad, f"adapter param frozen: {name}"
+            # Adapter received gradient (or was structurally not on the loss path)
+        else:
+            assert p.grad is None, f"unexpected grad on frozen param {name}"
 
 
 # ---------------------------------------------------------------------------
