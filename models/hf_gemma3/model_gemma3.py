@@ -487,10 +487,26 @@ class Gemma3ForCausalLMTTT(Gemma3PreTrainedModelTTT, GenerationMixin):
 
     def freeze_base_model(self) -> None:
         # adapter-style training: ttt_proj (W_target), ttt_conv, and the MLP
-        # down_proj (W_down) are trainable; everything else is frozen.
-        trainable = ("ttt_proj", "ttt_conv", "down_proj")
+        # down_proj (W_down) are trainable — but only the down_proj on TTT
+        # layers, since W_down is the surface the per-chunk ΔW updates. On
+        # non-TTT layers there is no fast-weight stream, so down_proj stays
+        # frozen along with the rest of the base model.
+        ttt_layers = set(getattr(self.config, "ttt_layers", None) or [])
+
         for name, param in self.named_parameters():
-            param.requires_grad = any(s in name for s in trainable)
+            if "ttt_proj" in name or "ttt_conv" in name:
+                param.requires_grad = True
+                continue
+            if "down_proj" in name:
+                # name is like "model.layers.{i}.mlp.down_proj.weight"
+                parts = name.split(".")
+                try:
+                    layer_idx = int(parts[parts.index("layers") + 1])
+                except (ValueError, IndexError):
+                    layer_idx = -1
+                param.requires_grad = layer_idx in ttt_layers
+                continue
+            param.requires_grad = False
 
     @can_return_tuple
     def forward(

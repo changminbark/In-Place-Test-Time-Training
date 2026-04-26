@@ -170,17 +170,21 @@ def test_build_dataset_unknown_name_raises(gpt2_tokenizer):
 # ---------------------------------------------------------------------------
 
 def test_freeze_base_model_keeps_ttt_and_down_proj_trainable():
-    model = Gemma3ForCausalLMTTT(_tiny_ttt_config(use_ttt=True))
+    cfg = _tiny_ttt_config(use_ttt=True)
+    model = Gemma3ForCausalLMTTT(cfg)
     model.freeze_base_model()
     trainable = {n for n, p in model.named_parameters() if p.requires_grad}
     assert trainable, "expected trainable params"
-    allowed = ("ttt_proj", "ttt_conv", "down_proj")
-    for n in trainable:
-        assert any(s in n for s in allowed), n
-    # And at least one of each kind is present.
     assert any("ttt_conv" in n for n in trainable)
     assert any("ttt_proj" in n for n in trainable)
     assert any("down_proj" in n for n in trainable)
+
+    # down_proj must be trainable only on TTT layers (and frozen elsewhere).
+    ttt_layers = set(cfg.ttt_layers)
+    for name, p in model.named_parameters():
+        if "down_proj" in name and "ttt" not in name:
+            layer_idx = int(name.split(".")[2])
+            assert p.requires_grad == (layer_idx in ttt_layers), name
 
 
 # ---------------------------------------------------------------------------

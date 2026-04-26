@@ -147,9 +147,21 @@ def test_freeze_base_model_isolates_grads_to_ttt():
 
     trainable = {n for n, p in model.named_parameters() if p.requires_grad}
     assert trainable, "expected at least one trainable param after freeze"
-    allowed = ("ttt_proj", "ttt_conv", "down_proj")
+    ttt_layers = set(cfg.ttt_layers)
     for name in trainable:
-        assert any(s in name for s in allowed), name
+        if "ttt_proj" in name or "ttt_conv" in name:
+            continue
+        assert "down_proj" in name, name
+        # down_proj is only trainable on TTT layers.
+        layer_idx = int(name.split(".")[2])
+        assert layer_idx in ttt_layers, f"down_proj on non-TTT layer {layer_idx}: {name}"
+
+    # Every non-TTT layer's down_proj must be frozen.
+    for name, p in model.named_parameters():
+        if "down_proj" in name and "ttt" not in name:
+            layer_idx = int(name.split(".")[2])
+            expected = layer_idx in ttt_layers
+            assert p.requires_grad == expected, name
 
     # Sanity: a forward+backward only populates grads on TTT params
     input_ids = torch.randint(0, cfg.vocab_size, (1, 16))
@@ -335,13 +347,17 @@ def test_strict_freeze_still_isolates_grads():
     out = model(input_ids=input_ids, return_fast_weights=True, labels=input_ids)
     out.loss.backward()
 
-    trainable_substrings = ("ttt_proj", "ttt_conv", "down_proj")
+    ttt_layers = set(cfg.ttt_layers)
     for name, p in model.named_parameters():
-        if any(s in name for s in trainable_substrings):
+        if "ttt_proj" in name or "ttt_conv" in name:
             assert p.requires_grad, f"adapter param frozen: {name}"
-            # Adapter received gradient (or was structurally not on the loss path)
-        else:
-            assert p.grad is None, f"unexpected grad on frozen param {name}"
+            continue
+        if "down_proj" in name:
+            layer_idx = int(name.split(".")[2])
+            expected = layer_idx in ttt_layers
+            assert p.requires_grad == expected, name
+            continue
+        assert p.grad is None, f"unexpected grad on frozen param {name}"
 
 
 # ---------------------------------------------------------------------------
