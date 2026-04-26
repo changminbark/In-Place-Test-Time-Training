@@ -4,9 +4,17 @@ full_eval: false
 tokenizer_model_id: google/gemma-3-1b-it
 
 tasks:
-  - single_needle
-  - multi_needle
-  - variable_tracking
+  - niah_single_1
+  - niah_single_2
+  - niah_single_3
+  - niah_multikey_1
+  - niah_multikey_2
+  - niah_multikey_3
+  - niah_multivalue
+  - niah_multiquery
+  - vt
+  - cwe
+  - fwe
 
 context_lengths:
   - 1024

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Dict
 
-from ..data_gen.common import normalize_answer
+from ..data_gen import normalize_answer
 
 
 def score_example(

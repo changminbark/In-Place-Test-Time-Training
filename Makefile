@@ -16,10 +16,19 @@ CKPT_DIR    ?= checkpoints/gemma3-1b-ttt
 help:
 	@awk 'BEGIN {FS = ":.*##"; printf "Targets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
-install: ## Install runtime + dev dependencies via uv
+install: ## Install dependencies + RULER submodule + nltk data + PG essay haystack
 	$(UV) sync --all-groups
+	git submodule update --init --recursive
+	$(UV) run python -c "import nltk; nltk.download('punkt_tab', quiet=True); nltk.download('punkt', quiet=True)"
+	@if [ ! -f third_party/RULER/scripts/data/synthetic/json/PaulGrahamEssays.json ]; then \
+		cd third_party/RULER/scripts/data/synthetic/json && \
+		$(UV) run python download_paulgraham_essay.py && \
+		rm -rf essay_repo essay_html; \
+	else \
+		echo "PG essays already downloaded"; \
+	fi
 
-sync: ## Sync lockfile -> environment (no upgrades)
+sync: ## Sync lockfile -> environment (no upgrades; skips submodule + data)
 	$(UV) sync
 
 lock: ## Resolve and write uv.lock

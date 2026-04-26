@@ -219,6 +219,7 @@ benchmark/data/smoke_full/
 benchmark/results/raw/
 benchmark/results/summary/
 benchmark/results/plots/
+benchmark/__pycache__/
 
 # Trained / downloaded model artifacts
 checkpoints/

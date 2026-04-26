@@ -1,7 +1,11 @@
-"""Offline smoke test: generate, evaluate (echo), aggregate, all with a fake tokenizer.
+"""Offline smoke test: exercise generate → evaluate → aggregate end-to-end.
 
-Does not require HF access or a real model. Writes to benchmark/data/smoke and
-benchmark/results/raw/smoke to avoid stomping on real runs.
+Generates a tiny RULER batch (one task, one short length, 3 samples) and runs
+the EchoPredictor over it. Useful for catching plumbing breaks without burning
+real-model compute.
+
+Requires `third_party/RULER` initialised and PG-essay JSON downloaded — see
+benchmark/spec.md for the one-time setup.
 """
 
 from __future__ import annotations
@@ -10,64 +14,48 @@ import json
 import shutil
 from pathlib import Path
 
-from ..data_gen import gen_multi_needle, gen_single_needle, gen_variable_tracking
+from ..data_gen import generate_examples
 from ..eval.predictor import EchoPredictor
 from ..eval.runner import run_benchmark
 
 
-class WhitespaceTokenizer:
-    """~1 token per whitespace-split word. Good enough to verify token budgeter logic."""
-
-    def encode(self, text: str, add_special_tokens: bool = False):
-        return text.split()
-
-    def decode(self, ids, skip_special_tokens: bool = True):
-        return " ".join(ids)
+SMOKE_TASK = "niah_single_1"   # noise haystack → no PG-essay dep
+SMOKE_LENGTH = 1024
+SMOKE_N = 3
+TOKENIZER = "google/gemma-3-1b-it"
 
 
 def main() -> None:
-    tok = WhitespaceTokenizer()
-    root = Path("benchmark/data/smoke")
-    if root.exists():
-        shutil.rmtree(root)
-    root.mkdir(parents=True, exist_ok=True)
+    out_root = Path("benchmark/data/smoke")
+    if out_root.exists():
+        shutil.rmtree(out_root)
+    out_root.mkdir(parents=True)
 
-    configs = [
-        ("single_needle", 256, lambda i: gen_single_needle(
-            tokenizer=tok, target_tokens=256, position="middle", seed=7, example_idx=i)),
-        ("multi_needle", 256, lambda i: gen_multi_needle(
-            tokenizer=tok, target_tokens=256, position_1="early", position_2="late",
-            seed=7, example_idx=i)),
-        ("variable_tracking", 256, lambda i: gen_variable_tracking(
-            tokenizer=tok, target_tokens=256, seed=7, example_idx=i)),
-    ]
+    out_path = out_root / f"{SMOKE_TASK}_{SMOKE_LENGTH}.jsonl"
+    with out_path.open("w") as f:
+        for ex in generate_examples(
+            task=SMOKE_TASK,
+            target_tokens=SMOKE_LENGTH,
+            num_samples=SMOKE_N,
+            tokenizer_model_id=TOKENIZER,
+            seed=7,
+        ):
+            f.write(json.dumps(ex) + "\n")
+    print(f"[smoke] wrote {SMOKE_N} to {out_path}")
 
-    n_per = 5
-    for task, ctx, gen in configs:
-        path = root / f"{task}_{ctx}.jsonl"
-        with path.open("w") as f:
-            for i in range(n_per):
-                f.write(json.dumps(gen(i)) + "\n")
-        print(f"[smoke] wrote {n_per} to {path}")
-
-    # Evaluate with EchoPredictor (should score 100%).
     results_root = Path("benchmark/results/raw/smoke")
     if results_root.exists():
         shutil.rmtree(results_root)
     predictor = EchoPredictor(model_name="echo", mode="icl")
 
-    for task, ctx, _ in configs:
-        dataset_path = root / f"{task}_{ctx}.jsonl"
-        results_path = results_root / "echo__icl" / f"{task}_{ctx}.jsonl"
-        summary = run_benchmark(
-            dataset_path=dataset_path,
-            results_path=results_path,
-            predictor=predictor,
-            max_new_tokens=16,
-        )
-        print(f"[smoke] {task:18s} acc={summary['accuracy']:.3f} n={summary['n']}")
-        assert summary["accuracy"] == 1.0, f"EchoPredictor should score 100%, got {summary['accuracy']}"
-
+    summary = run_benchmark(
+        dataset_path=out_path,
+        results_path=results_root / "echo__icl" / f"{SMOKE_TASK}_{SMOKE_LENGTH}.jsonl",
+        predictor=predictor,
+        max_new_tokens=16,
+    )
+    print(f"[smoke] {SMOKE_TASK}  acc={summary['accuracy']:.3f}  n={summary['n']}")
+    assert summary["accuracy"] == 1.0, f"Echo should score 100%, got {summary['accuracy']}"
     print("[smoke] OK")
 
 

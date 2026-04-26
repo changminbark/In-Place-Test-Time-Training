@@ -87,13 +87,6 @@ class SinglePassPredictor:
         )
 
 
-# Back-compat alias: the original ICLPredictor class name still works.
-class ICLPredictor(SinglePassPredictor):
-    def __init__(self, model_name: str, generate_fn, prompt_template: Optional[str] = None):
-        super().__init__(model_name=model_name, mode="icl", generate_fn=generate_fn,
-                         prompt_template=prompt_template)
-
-
 class StrictTTTPredictor:
     """Two-phase strict TTT. Ingest document → snapshot fast weights →
     answer question with snapshot, no document in the answer prompt.
@@ -148,10 +141,6 @@ class StrictTTTPredictor:
             answer_latency_ms=answer_ms,
             peak_gpu_memory_mb=peak,
         )
-
-
-# Back-compat alias
-TTTPredictor = StrictTTTPredictor
 
 
 class EchoPredictor:

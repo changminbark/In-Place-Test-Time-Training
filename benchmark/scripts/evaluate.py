@@ -7,7 +7,7 @@ decoupled from the model implementation.
 
 Two built-in predictor factories:
   benchmark.eval.factories:echo_icl_factory
-  benchmark.eval.factories:echo_ttt_factory
+  benchmark.eval.factories:echo_ttt_strict_factory
 
 Usage:
     python -m benchmark.scripts.evaluate --profile dev --predictor benchmark.eval.factories:echo_icl_factory

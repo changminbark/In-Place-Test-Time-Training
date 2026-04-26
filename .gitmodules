@@ -1,0 +1,3 @@
+[submodule "third_party/RULER"]
+	path = third_party/RULER
+	url = https://github.com/NVIDIA/RULER.git

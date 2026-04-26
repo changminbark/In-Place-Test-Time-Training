@@ -14,6 +14,16 @@ dependencies = [
     "torchdata>=0.11.0",
     "transformers>=5.6.2",
     "wandb>=0.26.1",
+    # RULER synthetic data generators (third_party/RULER)
+    "wonderwords>=2.2",
+    "nltk>=3.9",
+    "numpy>=1.26",
+    "tqdm>=4.66",
+    # Essay haystack download (one-time setup)
+    "html2text>=2024.2.26",
+    "beautifulsoup4>=4.12",
+    # RULER tokenizer wrapper retries via tenacity
+    "tenacity>=8.5",
 ]
 
 [dependency-groups]

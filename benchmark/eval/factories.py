@@ -25,10 +25,6 @@ def echo_ttt_strict_factory(cfg: dict):
     return EchoPredictor(model_name="echo", mode="ttt_strict")
 
 
-# Back-compat: the original 'echo_ttt_factory' was the strict variant.
-echo_ttt_factory = echo_ttt_strict_factory
-
-
 # Lazy re-exports of the real Gemma3-backed factories. Importing here would
 # pull in torch/transformers/models.* even when only the echo factories are
 # needed; instead, expose names that import on first call.
