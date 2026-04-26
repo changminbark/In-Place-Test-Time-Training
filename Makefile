@@ -11,7 +11,10 @@ HF_REPO_ID  ?= yourname/gemma3-1b-ttt
 CKPT_DIR    ?= checkpoints/gemma3-1b-ttt
 
 .DEFAULT_GOAL := help
-.PHONY: help install sync lock test test-slow test-watch train eval clean push-hub login-hf format
+HF_USER     ?= yourname
+DATASET     ?= tinystories
+
+.PHONY: help install sync lock test test-slow test-watch train train-tinystories train-longalpaca eval clean push-hub login-hf format
 
 help:
 	@awk 'BEGIN {FS = ":.*##"; printf "Targets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -37,8 +40,14 @@ test-all: ## Run every test, fast and slow
 test-watch: ## Re-run fast tests on file changes (needs pytest-watch)
 	$(UV) run ptw $(TEST_FILE) -- -v -m "not slow"
 
-train: ## Run training (edit main.py for hyperparameters)
-	$(PYTHON) train/main.py
+train: ## Train on $(DATASET) (override DATASET=tinystories|longalpaca, HF_USER=...)
+	$(PYTHON) -m train.main --dataset $(DATASET) --hf-user $(HF_USER)
+
+train-tinystories: ## Train + push the TinyStories adapter (HF_USER=...)
+	$(PYTHON) -m train.main --dataset tinystories --hf-user $(HF_USER)
+
+train-longalpaca: ## Train + push the LongAlpaca adapter (HF_USER=...)
+	$(PYTHON) -m train.main --dataset longalpaca --hf-user $(HF_USER)
 
 eval: ## Run RULER evaluation
 	$(PYTHON) eval/run_ruler.py

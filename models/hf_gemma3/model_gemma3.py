@@ -486,9 +486,11 @@ class Gemma3ForCausalLMTTT(Gemma3PreTrainedModelTTT, GenerationMixin):
         self.post_init()
 
     def freeze_base_model(self) -> None:
-        # adapter-only training: only ttt_proj + ttt_conv get gradients
+        # adapter-style training: ttt_proj (W_target), ttt_conv, and the MLP
+        # down_proj (W_down) are trainable; everything else is frozen.
+        trainable = ("ttt_proj", "ttt_conv", "down_proj")
         for name, param in self.named_parameters():
-            param.requires_grad = ("ttt_proj" in name) or ("ttt_conv" in name)
+            param.requires_grad = any(s in name for s in trainable)
 
     @can_return_tuple
     def forward(
