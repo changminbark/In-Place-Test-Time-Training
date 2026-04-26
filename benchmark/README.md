@@ -22,9 +22,11 @@ QA tasks (`qa_1` / `qa_2`) are not included — they require external dataset do
 
 ## Modes
 
-- `icl` — prompt = `[doc, q]`. Vanilla baseline.
-- `ttt_paper` — prompt = `[doc, q]`. Single forward; TTT layers update fast weights chunk-by-chunk during prefill, reset between examples. Matches the paper's RULER eval.
-- `ttt_strict` — two-phase. (1) Ingest: forward over doc only, snapshot per-layer cumulative `ΔW`. (2) Answer: forward over `q` only with the snapshot patched in. Doc absent from answer prompt.
+All three run on the same example set.
+
+- `icl` — prompt = `[doc, q]`. Single forward. Vanilla baseline. (ATTENTION)
+- `ttt_paper` — prompt = `[doc, q]`. Single forward; TTT layers update fast weights chunk-by-chunk during prefill, reset between examples. Matches the paper's RULER eval. (ATTENTION + TTT)
+- `ttt_strict` — two-phase. (1) Ingest: forward over doc only, snapshot per-layer cumulative `ΔW`. (2) Answer: forward over `q` only with the snapshot patched in. Doc absent from answer prompt — fast weights must substitute for context, not aid it. (TTT)
 
 ## Configuration
 

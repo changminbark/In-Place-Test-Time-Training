@@ -50,7 +50,7 @@ In-Place-Test-Time-Training/
 - `Gemma3MLPTTT` — Gemma3 MLP with optional `ttt_proj` (W_target) + `ttt_conv` modules, chunked TTT update in `forward(x, t=...)`.
 - `Gemma3DecoderLayerTTT` — Gemma3 decoder layer, near-mirror of upstream; only delta is a `target_states` kwarg threaded into `mlp(...)`.
 - `Gemma3PreTrainedModelTTT` — inherits from upstream `Gemma3PreTrainedModel`. Custom `_init_weights` does diagonal init for `TTTLinear` (near-identity) and zero init for `TTTConv1d` (no-op start), and defers everything else to `super()` so `_is_hf_initialized` skip-flags are honored and loaded checkpoints aren't trampled.
-- `Gemma3TextModelTTT`, `Gemma3ForCausalLMTTT` — backbone + LM head. `freeze_base_model()` on the LM marks everything except `ttt_proj` + `ttt_conv` as `requires_grad=False`.
+- `Gemma3TextModelTTT`, `Gemma3ForCausalLMTTT` — backbone + LM head. `freeze_base_model()` on the LM keeps `ttt_proj` (W_target), `ttt_conv`, and the MLP `down_proj` (W_down) trainable; everything else is `requires_grad=False`.
 
 When `config.use_ttt=False`, the TTT branches are skipped entirely and the model behaves identically to upstream Gemma3.
 
@@ -77,7 +77,7 @@ config = Gemma3TTTConfig.from_pretrained(
     ttt_lr=0.3,
 )
 model = Gemma3ForCausalLMTTT.from_pretrained("google/gemma-3-1b-it", config=config)
-model.freeze_base_model()            # only ttt_proj + ttt_conv get gradients
+model.freeze_base_model()            # ttt_proj, ttt_conv, and down_proj get gradients
 ```
 
 ### From a trained checkpoint (local)
@@ -100,46 +100,23 @@ model = AutoModelForCausalLM.from_pretrained(
 
 ## Training
 
+`train/main.py` trains the TTT adapters (`ttt_conv`, `ttt_proj`/W_target) plus the MLP `down_proj` (W_down) on a single dataset selected via `--dataset`, then pushes the result to the Hub (bundled with the modeling code + `auto_map`).
+
 ```bash
-make train
+make train-tinystories HF_USER=<you>
+make train-longalpaca  HF_USER=<you>
 # or directly:
-uv run python train/main.py
+uv run python -m train.main --dataset tinystories --hf-user <you>
+uv run python -m train.main --dataset longalpaca  --hf-user <you>
 ```
 
-Edit `train/main.py` to set TTT layer placement, training context length (4K–8K), batch size, learning rate, and dataset (FineWeb-Edu). The script:
-
-1. Loads `google/gemma-3-1b-it` weights into a `Gemma3ForCausalLMTTT` with `use_ttt=True`.
-2. Calls `freeze_base_model()` to gate gradients to TTT adapter parameters only.
-3. Runs SFT on long-context documents.
-4. Saves a checkpoint to `./checkpoints/gemma3-1b-ttt/`.
+Supported datasets: `tinystories` (`roneneldan/TinyStories`) and `longalpaca` (`Yukang/LongAlpaca-12k`). See [`train/README.md`](train/README.md) for what's trained, per-dataset defaults, full CLI flags, and a Colab walkthrough.
 
 ## Pushing to the HuggingFace Hub
 
-After training:
+`train/main.py` handles this automatically: it sets `auto_map`, copies `config_gemma3.py` + `model_gemma3.py` next to the weights, and pushes to `<hf-user>/<base>-ttt-<dataset>` (override with `--repo-id`). Authenticate once with `make login-hf`. Use `--no-push` to skip the upload.
 
-```bash
-make login-hf                                          # huggingface-cli login (one time)
-make push-hub HF_REPO_ID=yourname/gemma3-1b-ttt CKPT_DIR=checkpoints/gemma3-1b-ttt
-```
-
-For Hub users to load the model with `AutoModelForCausalLM.from_pretrained(..., trust_remote_code=True)`, the repo must contain:
-
-- `config.json` (written by `save_pretrained`), with an `auto_map` entry:
-  ```json
-  "auto_map": {
-      "AutoConfig": "config_gemma3.Gemma3TTTConfig",
-      "AutoModelForCausalLM": "model_gemma3.Gemma3ForCausalLMTTT"
-  }
-  ```
-- `config_gemma3.py` and `model_gemma3.py` (the modeling code).
-- `model.safetensors` (trained weights, including base + TTT adapter).
-- A model card (`README.md`) noting:
-  - License: `apache-2.0` (modeling code is yours, base weights are Gemma).
-  - `base_model: google/gemma-3-1b-it`.
-  - That base weights remain subject to the [Gemma Terms of Use](https://ai.google.dev/gemma/terms).
-  - Acknowledgement of the In-Place TTT paper.
-
-If `auto_map` isn't in `config.json`, copy `config_gemma3.py` and `model_gemma3.py` into the checkpoint folder before `push-hub` and add the `auto_map` block manually. Hub-side examples: see HuggingFace's [custom code documentation](https://huggingface.co/docs/transformers/custom_models).
+For manually-built checkpoints, `make push-hub HF_REPO_ID=... CKPT_DIR=...` is still available; the repo must contain `config.json` with an `auto_map` block, the two `.py` modeling files, weights, and ideally a model card noting the Gemma base license. See HuggingFace's [custom code documentation](https://huggingface.co/docs/transformers/custom_models) for the standard layout.
 
 ## Evaluation
 
@@ -158,7 +135,8 @@ Run `make help` for the full list. Highlights:
 | `make install` | `uv sync --all-groups` |
 | `make test` | fast pytest suite (skips slow) |
 | `make test-slow` | downloads real Gemma3-1B and exercises the load path |
-| `make train` | runs `train/main.py` |
+| `make train DATASET=...` | trains on `tinystories`/`longalpaca` and pushes (`HF_USER=...`) |
+| `make train-tinystories` / `make train-longalpaca` | dataset-specific shortcuts |
 | `make eval` | runs `eval/ruler.py` |
 | `make login-hf` | `huggingface-cli login` |
 | `make push-hub` | upload `$(CKPT_DIR)` to `$(HF_REPO_ID)` |

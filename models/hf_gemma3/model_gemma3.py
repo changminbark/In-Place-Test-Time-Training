@@ -23,7 +23,6 @@ from typing import Dict, Optional, Union
 import torch
 from torch import nn
 
-from transformers import PreTrainedModel
 from transformers.models.gemma3.modeling_gemma3 import Gemma3PreTrainedModel
 from transformers.cache_utils import DynamicCache
 from transformers.generation import GenerationMixin
@@ -40,7 +39,6 @@ from transformers.models.gemma3.modeling_gemma3 import (
     TransformersKwargs,
     Unpack,
     _bidirectional_window_overlay,
-    auto_docstring,
 )
 from transformers.utils import can_return_tuple
 from transformers.utils.generic import merge_with_config_defaults
@@ -76,9 +74,9 @@ class TTTConv1d(nn.Conv1d):
 
 
 class Gemma3MLPTTT(Gemma3MLP):
-    def __init__(self, config: Gemma3TTTConfig, layer_idx: Optional[int] = None):
+    def __init__(self, config: Gemma3TTTConfig, layer_idx: Optional[int] = None) -> None:
         super().__init__(config)
-        
+
         # TTT Add-on
         self.layer_idx = -1 if layer_idx is None else layer_idx
         if getattr(config, "use_ttt", False) and self.layer_idx in getattr(config, "ttt_layers", []):
@@ -94,7 +92,7 @@ class Gemma3MLPTTT(Gemma3MLP):
             )
             
     # TTT chunk padding
-    def padding(self, x: torch.Tensor):
+    def padding(self, x: torch.Tensor) -> torch.Tensor:
         if not hasattr(self, "ttt_chunk"):
             return x
         if x.shape[1] % self.ttt_chunk != 0:
@@ -126,16 +124,14 @@ class Gemma3MLPTTT(Gemma3MLP):
         *,
         fast_weights: Optional[torch.Tensor] = None,
         return_fast_weights: bool = False,
-    ):
+    ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         # Input embedding
         z = self.act_fn(self.gate_proj(x)) * self.up_proj(x)
 
         # Vanilla path (no TTT conv module, e.g. layer is not in ttt_layers).
         if t is None or not hasattr(self, "ttt_conv"):
             out = self.down_proj(z)
-            if return_fast_weights or fast_weights is not None:
-                return out, None
-            return out
+            return out, None
 
         # Snapshot consumer path: use the supplied fast_weights uniformly.
         # fast_weights expected shape (d, d_ff) or (B, d, d_ff). η applied here.
@@ -159,11 +155,11 @@ class Gemma3MLPTTT(Gemma3MLP):
             return out, (fast_weights if return_fast_weights else None)
 
         # Paper-style chunk-wise update path.
-        t = self.padding(t)        # (B, T, C, d)
-        z_padded = self.padding(z) # (B, T, C, d_ff)
+        t = self.padding(t)        # (b, t, c, d) = (batch_size, chunk_num, chunk_size, d_model)
+        z_padded = self.padding(z) # (b, t, c, d_ff) = (batch_size, chunk_num, chunk_size, d_ff)
         bs, chunk_num, chunk_size, _ = t.shape
         t = (
-            self.ttt_conv(t.transpose(-1, -2).reshape(bs * chunk_num, -1, chunk_size))
+            self.ttt_conv(t.transpose(-1, -2).reshape(bs * chunk_num, -1, chunk_size)) # conv across d_model channels for chunk_size 
             .transpose(-1, -2)
             .reshape(bs, chunk_num, chunk_size, -1)
         )
@@ -191,7 +187,7 @@ class Gemma3MLPTTT(Gemma3MLP):
         out = rearrange(down_proj, "b t c d -> b (t c) d")[:, : x.shape[1], :]
 
         if not return_fast_weights:
-            return out
+            return out, None
 
         # Build the un-scaled snapshot summing ΔW across ALL chunks (incl. last).
         # delta_per_chunk_excl already covers chunks 0..T-2; compute chunk T-1
@@ -211,7 +207,7 @@ class Gemma3MLPTTT(Gemma3MLP):
         return out, snapshot
 
 class Gemma3DecoderLayerTTT(Gemma3DecoderLayer):
-    def __init__(self, config: Gemma3TTTConfig, layer_idx: int):
+    def __init__(self, config: Gemma3TTTConfig, layer_idx: int) -> None:
         super().__init__(config=config, layer_idx=layer_idx)
         self.mlp = Gemma3MLPTTT(config, layer_idx=layer_idx)
         ttt_layers = getattr(config, "ttt_layers", []) or []
@@ -228,7 +224,7 @@ class Gemma3DecoderLayerTTT(Gemma3DecoderLayer):
         fast_weights: torch.Tensor | None = None,
         return_fast_weights: bool = False,
         **kwargs: Unpack[TransformersKwargs],
-    ) -> tuple[torch.FloatTensor, tuple[torch.FloatTensor, torch.FloatTensor] | None]:
+    ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         residual = hidden_states
 
         hidden_states = self.input_layernorm(hidden_states)
@@ -250,28 +246,17 @@ class Gemma3DecoderLayerTTT(Gemma3DecoderLayer):
         if self.is_ttt_layer and target_states is None:
             target_states = hidden_states
 
-        # Only invoke the tuple-returning MLP path when the caller explicitly
-        # asked for snapshot capture or supplied a snapshot to consume.
-        # Otherwise we keep the original single-tensor return shape — preserving
-        # the paper-style hot path and existing call sites unchanged.
-        wants_strict = self.is_ttt_layer and (return_fast_weights or fast_weights is not None)
-        if wants_strict:
-            hidden_states, fw_out = self.mlp(
-                hidden_states,
-                t=target_states,
-                fast_weights=fast_weights,
-                return_fast_weights=return_fast_weights,
-            )
-        else:
-            hidden_states = self.mlp(hidden_states, t=target_states)
-            fw_out = None
+        hidden_states, fw_out = self.mlp(
+            hidden_states,
+            t=target_states,
+            fast_weights=fast_weights,
+            return_fast_weights=return_fast_weights,
+        )
 
         hidden_states = self.post_feedforward_layernorm(hidden_states)
         hidden_states = residual + hidden_states
 
-        if return_fast_weights or fast_weights is not None:
-            return hidden_states, fw_out
-        return hidden_states
+        return hidden_states, fw_out
 
 
 class Gemma3PreTrainedModelTTT(Gemma3PreTrainedModel):
@@ -296,7 +281,7 @@ class Gemma3PreTrainedModelTTT(Gemma3PreTrainedModel):
     input_modalities = ("text",)
     
     @torch.no_grad()  # will not affect TTT layers since they bypass autograd
-    def _init_weights(self, module):
+    def _init_weights(self, module: nn.Module) -> None:
         std = getattr(self.config, "initializer_range", 0.02)
 
         # TTT modules: custom init so the TTT branch starts as a near-identity
@@ -358,7 +343,7 @@ class Gemma3TextModelTTT(Gemma3PreTrainedModelTTT):
     config: Gemma3TTTConfig
     input_modalities = ("text",)
 
-    def __init__(self, config: Gemma3TTTConfig):
+    def __init__(self, config: Gemma3TTTConfig) -> None:
         super().__init__(config)
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
@@ -407,7 +392,7 @@ class Gemma3TextModelTTT(Gemma3PreTrainedModelTTT):
         fast_weights: Optional[Dict[int, torch.Tensor]] = None,
         return_fast_weights: bool = False,
         **kwargs: Unpack[TransformersKwargs],
-    ) -> BaseModelOutputWithPast:
+    ) -> Gemma3TTTBaseModelOutput:
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
 
@@ -462,44 +447,22 @@ class Gemma3TextModelTTT(Gemma3PreTrainedModelTTT):
             if fast_weights is not None and getattr(decoder_layer, "is_ttt_layer", False):
                 in_fw = fast_weights.get(i)
 
-            wants_strict = getattr(decoder_layer, "is_ttt_layer", False) and (
-                return_fast_weights or in_fw is not None
+            hidden_states, fw_out = decoder_layer(
+                hidden_states,
+                attention_mask=causal_mask_mapping[self.config.layer_types[i]],
+                position_embeddings=position_embeddings[self.config.layer_types[i]],
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                target_states=self._resolve_ttt_target_states(decoder_layer, inputs_embeds),
+                fast_weights=in_fw,
+                return_fast_weights=return_fast_weights,
+                **kwargs,
             )
-
-            if wants_strict:
-                hidden_states, fw_out = decoder_layer(
-                    hidden_states,
-                    attention_mask=causal_mask_mapping[self.config.layer_types[i]],
-                    position_embeddings=position_embeddings[self.config.layer_types[i]],
-                    position_ids=position_ids,
-                    past_key_values=past_key_values,
-                    target_states=self._resolve_ttt_target_states(decoder_layer, inputs_embeds),
-                    fast_weights=in_fw,
-                    return_fast_weights=return_fast_weights,
-                    **kwargs,
-                )
-                if out_fast_weights is not None and fw_out is not None:
-                    out_fast_weights[i] = fw_out
-            else:
-                hidden_states = decoder_layer(
-                    hidden_states,
-                    attention_mask=causal_mask_mapping[self.config.layer_types[i]],
-                    position_embeddings=position_embeddings[self.config.layer_types[i]],
-                    position_ids=position_ids,
-                    past_key_values=past_key_values,
-                    target_states=self._resolve_ttt_target_states(decoder_layer, inputs_embeds),
-                    **kwargs,
-                )
+            if out_fast_weights is not None and fw_out is not None:
+                out_fast_weights[i] = fw_out
 
         hidden_states = self.norm(hidden_states)
 
-        # When neither strict kwarg is in play, return the original output type
-        # so existing callers see no schema change.
-        if not return_fast_weights and fast_weights is None:
-            return BaseModelOutputWithPast(
-                last_hidden_state=hidden_states,
-                past_key_values=past_key_values,
-            )
         return Gemma3TTTBaseModelOutput(
             last_hidden_state=hidden_states,
             past_key_values=past_key_values,
@@ -513,7 +476,7 @@ class Gemma3ForCausalLMTTT(Gemma3PreTrainedModelTTT, GenerationMixin):
     _pp_plan = {"lm_head": (["hidden_states"], ["logits"])}
     config: Gemma3TTTConfig
 
-    def __init__(self, config: Gemma3TTTConfig):
+    def __init__(self, config: Gemma3TTTConfig) -> None:
         super().__init__(config)
         self.model = Gemma3TextModelTTT(config)
         self.vocab_size = config.vocab_size
@@ -522,10 +485,12 @@ class Gemma3ForCausalLMTTT(Gemma3PreTrainedModelTTT, GenerationMixin):
         # Initialize weights and apply final processing
         self.post_init()
 
-    def freeze_base_model(self):
-        # adapter-only training: only ttt_proj + ttt_conv get gradients
+    def freeze_base_model(self) -> None:
+        # adapter-style training: ttt_proj (W_target), ttt_conv, and the MLP
+        # down_proj (W_down) are trainable; everything else is frozen.
+        trainable = ("ttt_proj", "ttt_conv", "down_proj")
         for name, param in self.named_parameters():
-            param.requires_grad = ("ttt_proj" in name) or ("ttt_conv" in name)
+            param.requires_grad = any(s in name for s in trainable)
 
     @can_return_tuple
     def forward(
@@ -541,8 +506,8 @@ class Gemma3ForCausalLMTTT(Gemma3PreTrainedModelTTT, GenerationMixin):
         fast_weights: Optional[Dict[int, torch.Tensor]] = None,
         return_fast_weights: bool = False,
         **kwargs: Unpack[TransformersKwargs],
-    ) -> CausalLMOutputWithPast:
-        outputs: BaseModelOutputWithPast = self.model(
+    ) -> Gemma3TTTCausalLMOutput:
+        outputs: Gemma3TTTBaseModelOutput = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
@@ -567,24 +532,13 @@ class Gemma3ForCausalLMTTT(Gemma3PreTrainedModelTTT, GenerationMixin):
         if labels is not None:
             loss = self.loss_function(logits, labels, self.vocab_size, **kwargs)
 
-        # Preserve original output schema for existing callers; only switch to
-        # the TTT-extended output type when the strict kwargs are in play.
-        captured_fw = getattr(outputs, "fast_weights", None)
-        if not return_fast_weights and fast_weights is None:
-            return CausalLMOutputWithPast(
-                loss=loss,
-                logits=logits,
-                past_key_values=outputs.past_key_values,
-                hidden_states=outputs.hidden_states,
-                attentions=outputs.attentions,
-            )
         return Gemma3TTTCausalLMOutput(
             loss=loss,
             logits=logits,
             past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
-            fast_weights=captured_fw,
+            fast_weights=outputs.fast_weights,
         )
 
 

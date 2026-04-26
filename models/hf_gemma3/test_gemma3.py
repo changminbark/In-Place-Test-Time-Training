@@ -147,8 +147,9 @@ def test_freeze_base_model_isolates_grads_to_ttt():
 
     trainable = {n for n, p in model.named_parameters() if p.requires_grad}
     assert trainable, "expected at least one trainable param after freeze"
+    allowed = ("ttt_proj", "ttt_conv", "down_proj")
     for name in trainable:
-        assert "ttt_proj" in name or "ttt_conv" in name, name
+        assert any(s in name for s in allowed), name
 
     # Sanity: a forward+backward only populates grads on TTT params
     input_ids = torch.randint(0, cfg.vocab_size, (1, 16))
@@ -334,8 +335,9 @@ def test_strict_freeze_still_isolates_grads():
     out = model(input_ids=input_ids, return_fast_weights=True, labels=input_ids)
     out.loss.backward()
 
+    trainable_substrings = ("ttt_proj", "ttt_conv", "down_proj")
     for name, p in model.named_parameters():
-        if "ttt_proj" in name or "ttt_conv" in name:
+        if any(s in name for s in trainable_substrings):
             assert p.requires_grad, f"adapter param frozen: {name}"
             # Adapter received gradient (or was structurally not on the loss path)
         else:
