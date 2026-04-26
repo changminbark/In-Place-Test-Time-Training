@@ -153,18 +153,29 @@ def save_with_auto_map(
 # Training
 # ---------------------------------------------------------------------------
 
-def load_model_and_tokenizer(base_model: str, ttt_layers, ttt_chunk: int):
+def load_model_and_tokenizer(
+    base_model: str,
+    ttt_layers,
+    ttt_chunk: int,
+    ttt_lr: float,
+    ttt_proj: bool,
+    ttt_target: str,
+):
     tokenizer = AutoTokenizer.from_pretrained(base_model)
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    # Pass every TTT field explicitly: the base Gemma3 config.json has none of
+    # them, and from_pretrained overlay-merging can leave them at None instead
+    # of falling back to the class defaults.
     cfg = Gemma3TTTConfig.from_pretrained(
         base_model,
         use_ttt=True,
         ttt_layers=list(ttt_layers),
         ttt_chunk=ttt_chunk,
-        ttt_proj=True,
-        ttt_target="hidden_states",
+        ttt_lr=ttt_lr,
+        ttt_proj=ttt_proj,
+        ttt_target=ttt_target,
     )
     model = Gemma3ForCausalLMTTT.from_pretrained(
         base_model, config=cfg, torch_dtype=torch.bfloat16,
@@ -276,6 +287,14 @@ def parse_args():
     p.add_argument("--ttt-layers", nargs="+", type=int,
                    default=[0, 6, 12, 18, 24])
     p.add_argument("--ttt-chunk", type=int, default=2048)
+    p.add_argument("--ttt-lr", type=float, default=0.3,
+                   help="Inner-loop η that scales the per-chunk ΔW.")
+    p.add_argument("--ttt-proj", action=argparse.BooleanOptionalAction, default=True,
+                   help="Enable the W_target (ttt_proj) module. "
+                        "Use --no-ttt-proj to disable.")
+    p.add_argument("--ttt-target", choices=("hidden_states", "input_embed"),
+                   default="hidden_states",
+                   help="Source for the TTT target stream.")
 
     p.add_argument("--epochs", type=float, default=None)
     p.add_argument("--batch-size", type=int, default=None)
@@ -327,7 +346,12 @@ def main():
     )
 
     model, tokenizer = load_model_and_tokenizer(
-        args.base_model, args.ttt_layers, args.ttt_chunk,
+        args.base_model,
+        args.ttt_layers,
+        args.ttt_chunk,
+        args.ttt_lr,
+        args.ttt_proj,
+        args.ttt_target,
     )
 
     train_ds = build_dataset(args.dataset, tokenizer, max_length, args.max_samples)
