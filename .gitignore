@@ -207,3 +207,19 @@ poetry.toml
 pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/python,macos
+
+### Project: regeneratable benchmark artifacts ###
+# Synthetic eval data (regenerate: python -m benchmark.scripts.generate --profile {dev,full})
+benchmark/data/dev/
+benchmark/data/full/
+benchmark/data/smoke/
+benchmark/data/smoke_full/
+
+# Eval outputs (regenerate: python -m benchmark.scripts.{evaluate,aggregate,plot})
+benchmark/results/raw/
+benchmark/results/summary/
+benchmark/results/plots/
+
+# Trained / downloaded model artifacts
+checkpoints/
+models_cache/

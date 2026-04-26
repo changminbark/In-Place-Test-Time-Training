@@ -1,0 +1,44 @@
+benchmark_name: long_context_retrieval_mini
+full_eval: false
+
+tokenizer_model_id: google/gemma-3-1b-it
+
+tasks:
+  - single_needle
+  - multi_needle
+  - variable_tracking
+
+context_lengths:
+  - 1024
+  - 4096
+  - 8192
+  - 16384
+  - 32768
+
+profiles:
+  dev:
+    examples_per_task_length: 25
+  full:
+    examples_per_task_length: 100
+
+modes:
+  - icl
+  - ttt_paper
+  - ttt_strict
+
+needle_positions:
+  - early
+  - middle
+  - late
+
+generation:
+  max_new_tokens: 16
+  temperature: 0.0
+  do_sample: false
+
+scoring:
+  normalize_case: true
+  strip_whitespace: true
+  strip_punctuation: true
+
+seed: 1337
