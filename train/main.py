@@ -48,15 +48,16 @@ DATASET_CHOICES = ("tinystories", "longalpaca")
 # ---------------------------------------------------------------------------
 
 def _tokenize(examples, tokenizer, text_key: str, max_length: int):
-    out = tokenizer(
+    # Don't pre-add `labels`: DataCollatorForLanguageModeling(mlm=False) clones
+    # them from padded input_ids. Pre-adding them at un-padded length breaks
+    # collation because the collator only pads input_ids/attention_mask.
+    return tokenizer(
         examples[text_key],
         truncation=True,
         max_length=max_length,
         padding=False,
         return_attention_mask=True,
     )
-    out["labels"] = [ids.copy() for ids in out["input_ids"]]
-    return out
 
 
 def build_tinystories(tokenizer, max_length: int, max_samples: Optional[int]):
@@ -186,9 +187,8 @@ def _setup_wandb(
     if not enabled:
         os.environ["WANDB_DISABLED"] = "true"
         return False
-    try:
-        import wandb  # noqa: F401
-    except ImportError:
+    import importlib.util
+    if importlib.util.find_spec("wandb") is None:
         print("[wandb] package not installed; skipping wandb logging")
         os.environ["WANDB_DISABLED"] = "true"
         return False

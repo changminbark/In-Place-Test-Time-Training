@@ -6,7 +6,8 @@ PYTEST ?= uv run pytest
 UV     ?= uv
 
 PKG          := models/hf_gemma3
-TEST_FILE    := $(PKG)/test_gemma3.py
+MODEL_TESTS    := $(PKG)/test_gemma3.py
+TRAIN_TESTS  := train/test_main.py
 HF_REPO_ID  ?= yourname/gemma3-1b-ttt
 CKPT_DIR    ?= checkpoints/gemma3-1b-ttt
 
@@ -38,16 +39,16 @@ lock: ## Resolve and write uv.lock
 	$(UV) lock
 
 test: ## Run fast test suite (skips @slow tests)
-	$(PYTEST) $(TEST_FILE) -v -m "not slow"
+	$(PYTEST) $(MODEL_TESTS) $(TRAIN_TESTS) -v -m "not slow"
 
 test-slow: ## Run @slow tests too (downloads real Gemma3-1B; needs HF auth)
-	$(PYTEST) $(TEST_FILE) -v -m slow
+	$(PYTEST) $(MODEL_TESTS) $(TRAIN_TESTS) -v -m slow
 
 test-all: ## Run every test, fast and slow
-	$(PYTEST) $(TEST_FILE) -v
+	$(PYTEST) $(MODEL_TESTS) $(TRAIN_TESTS) -v
 
 test-watch: ## Re-run fast tests on file changes (needs pytest-watch)
-	$(UV) run ptw $(TEST_FILE) -- -v -m "not slow"
+	$(UV) run ptw $(MODEL_TESTS) -- -v -m "not slow"
 
 train: ## Train on $(DATASET) (override DATASET=tinystories|longalpaca, HF_USER=...)
 	$(PYTHON) -m train.main --dataset $(DATASET) --hf-user $(HF_USER)

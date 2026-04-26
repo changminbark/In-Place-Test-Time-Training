@@ -189,8 +189,8 @@ def test_save_and_load_pretrained_roundtrip():
 # Strict-TTT state hook: snapshot capture and snapshot consumption
 # ---------------------------------------------------------------------------
 
-def test_strict_paper_default_unchanged():
-    """Without the new kwargs, output schema and values are unchanged."""
+def test_strict_paper_default_TTT():
+    """Without the new kwargs, output schema and values are TTT."""
     cfg = _tiny_config(use_ttt=True)
     model = Gemma3ForCausalLMTTT(cfg).eval()
 
@@ -198,8 +198,8 @@ def test_strict_paper_default_unchanged():
     with torch.no_grad():
         out = model(input_ids=input_ids)
 
-    # Existing callers see CausalLMOutputWithPast (NOT the TTT-extended subtype).
-    assert type(out) is CausalLMOutputWithPast
+    # Existing callers see Gemma3TTTCausalLMOutput.
+    assert type(out) is Gemma3TTTCausalLMOutput
 
 
 def test_strict_ingest_returns_fast_weights_dict():
@@ -312,7 +312,7 @@ def test_strict_snapshot_matches_paper_two_chunk_decomposition():
 
     with torch.no_grad():
         # 1. Paper-style two-chunk forward.
-        out_paper_full = mlp(x_full, t=t_full)               # (1, 2C, d)
+        out_paper_full, _ = mlp(x_full, t=t_full)               # (1, 2C, d)
         out_paper_b = out_paper_full[:, C:]                   # chunk-b portion
 
         # 2. Strict ingest on chunk a only.
