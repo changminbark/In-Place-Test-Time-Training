@@ -28,6 +28,7 @@ from train.main import (
     DATASET_DEFAULTS,
     _format_longalpaca,
     _resolve,
+    _samples_tag,
     _setup_wandb,
     _tokenize,
     build_dataset,
@@ -323,6 +324,15 @@ def test_resolve_helper():
     assert _resolve(None, 7) == 7
     assert _resolve(3, 7) == 3
     assert _resolve(0, 7) == 0  # explicit zero must win over default
+
+
+def test_samples_tag_formatting():
+    assert _samples_tag(None) == "full"
+    assert _samples_tag(500) == "500"
+    assert _samples_tag(50_000) == "50k"
+    assert _samples_tag(1_500) == "1.5k"
+    assert _samples_tag(2_000_000) == "2m"
+    assert _samples_tag(1_500_000) == "1.5m"
 
 
 # ---------------------------------------------------------------------------

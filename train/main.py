@@ -350,6 +350,20 @@ def _resolve(arg_val, default_val):
     return default_val if arg_val is None else arg_val
 
 
+def _samples_tag(max_samples: Optional[int]) -> str:
+    """Compact, repo-id-safe tag for the sample count: 'full', '500', '50k', '1.5m'."""
+    if max_samples is None:
+        return "full"
+    n = max_samples
+    if n >= 1_000_000:
+        v = n / 1_000_000
+        return f"{v:.0f}m" if v.is_integer() else f"{v:.1f}m".rstrip("0").rstrip(".")
+    if n >= 1_000:
+        v = n / 1_000
+        return f"{v:.0f}k" if v.is_integer() else f"{v:.1f}k".rstrip("0").rstrip(".")
+    return str(n)
+
+
 def main():
     args = parse_args()
     defaults = DATASET_DEFAULTS[args.dataset]
@@ -406,7 +420,8 @@ def main():
         repo_id = args.repo_id
     elif args.hf_user is not None:
         base_tag = args.base_model.split("/")[-1].lower()
-        repo_id = f"{args.hf_user}/{base_tag}-ttt-{args.dataset}"
+        n_tag = _samples_tag(args.max_samples)
+        repo_id = f"{args.hf_user}/{base_tag}-ttt-{args.dataset}-{n_tag}"
     else:
         repo_id = None
 
