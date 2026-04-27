@@ -16,12 +16,40 @@ Adapters live only on the layers listed in `ttt_layers` (default `[0, 6, 12, 18,
 
 ## Datasets
 
-| `--dataset`    | Source                       | Max length default | Notes                                |
-| -------------- | ---------------------------- | ------------------ | ------------------------------------ |
-| `tinystories`  | `roneneldan/TinyStories`     | 1024               | short narratives, large sample count |
-| `longalpaca`   | `Yukang/LongAlpaca-12k`      | 8192               | long instruction/response pairs      |
+| `--dataset`    | Source                       | Notes                                |
+| -------------- | ---------------------------- | ------------------------------------ |
+| `tinystories`  | `roneneldan/TinyStories`     | short narratives, large sample count |
+| `longalpaca`   | `Yukang/LongAlpaca-12k`      | long instruction/response pairs      |
 
 LongAlpaca is reformatted into `### Instruction / ### Input / ### Response` blocks before tokenisation. Both datasets train as plain causal-LM (`labels = input_ids`).
+
+## Default hyperparameters
+
+Tuned for *adapter pretraining* on a frozen 1B base. Live in `DATASET_DEFAULTS` in `train/main.py`; override any of them on the CLI.
+
+| Hyperparameter         | TinyStories | LongAlpaca | Flag                |
+| ---------------------- | ----------- | ---------- | ------------------- |
+| `max_length`           | 1024        | 4096       | `--max-length`      |
+| `epochs`               | 1.0         | 2.0        | `--epochs`          |
+| `batch_size`           | 8           | 1          | `--batch-size`      |
+| `grad_accum`           | 8           | 16         | `--grad-accum`      |
+| **effective batch**    | 64          | 16         | —                   |
+| `lr`                   | 1e-4        | 5e-5       | `--lr`              |
+| `weight_decay`         | 0.1         | 0.1        | `--weight-decay`    |
+| `warmup_steps`         | 500         | 100        | `--warmup-steps`    |
+| `max_grad_norm`        | 1.0         | 1.0        | `--max-grad-norm`   |
+
+Shared optimizer / schedule (not per-dataset): AdamW with `(β1, β2) = (0.9, 0.95)`, cosine LR decay, bf16 (fp16 fallback on non-bf16 GPUs), gradient checkpointing off.
+
+TTT-module knobs (defaults match the In-Place TTT paper):
+
+| Hyperparameter | Default              | Flag             |
+| -------------- | -------------------- | ---------------- |
+| `ttt_layers`   | `[0, 6, 12, 18, 24]` | `--ttt-layers`   |
+| `ttt_chunk`    | 2048                 | `--ttt-chunk`    |
+| `ttt_lr` (η)   | 0.3                  | `--ttt-lr`       |
+| `ttt_proj`     | on                   | `--no-ttt-proj`  |
+| `ttt_target`   | `hidden_states`      | `--ttt-target`   |
 
 ## Local usage
 
@@ -40,16 +68,16 @@ Each run pushes to `<hf-user>/<base>-ttt-<dataset>` (override with `--repo-id`).
 AutoModelForCausalLM.from_pretrained("<hf-user>/<base>-ttt-tinystories", trust_remote_code=True)
 ```
 
-### Useful flags
+### Other flags
 
 - `--base-model` (default `google/gemma-3-1b-it`)
-- `--ttt-layers 0 6 12 18 24` and `--ttt-chunk 2048`
-- `--epochs / --batch-size / --grad-accum / --lr / --max-length / --max-samples`
-- `--no-push` to train without uploading
+- `--max-samples N` to cap the dataset size (e.g. for a Colab session)
+- `--no-push` to train without uploading; `--repo-id` to override the auto repo name
 - `--no-bf16` if your GPU lacks bfloat16 (falls back to fp16 on CUDA)
+- `--logging-steps` (default 10), `--save-steps` (default 500)
 - `--wandb-project` (default `gemma3-ttt`), `--wandb-run-name`, `--no-wandb`
 
-Per-dataset defaults live in `DATASET_DEFAULTS` in `train/main.py`.
+See `python -m train.main --help` for the complete list.
 
 ## Logging (wandb)
 
