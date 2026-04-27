@@ -40,7 +40,7 @@ needle_positions:
   - late
 
 generation:
-  max_new_tokens: 64
+  max_new_tokens: 128
   temperature: 0.0
   do_sample: false
 
