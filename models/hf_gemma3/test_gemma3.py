@@ -32,7 +32,6 @@ from models.hf_gemma3.model_gemma3 import (
 
 
 def _tiny_config(use_ttt: bool, ttt_layers=(0, 2)) -> Gemma3TTTConfig:
-    """Tiny config so tests run on CPU in seconds."""
     return Gemma3TTTConfig(
         vocab_size=512,
         hidden_size=64,
@@ -202,7 +201,6 @@ def test_save_and_load_pretrained_roundtrip():
 # ---------------------------------------------------------------------------
 
 def test_strict_paper_default_TTT():
-    """Without the new kwargs, output schema and values are TTT."""
     cfg = _tiny_config(use_ttt=True)
     model = Gemma3ForCausalLMTTT(cfg).eval()
 
@@ -235,8 +233,6 @@ def test_strict_ingest_returns_fast_weights_dict():
 
 
 def test_strict_consume_zero_snapshot_matches_no_ttt():
-    """Feeding zero snapshots reduces the MLP to its base W_down — equivalent to
-    a model where the TTT branch produces no perturbation."""
     cfg = _tiny_config(use_ttt=True, ttt_layers=(0, 2))
     model = Gemma3ForCausalLMTTT(cfg).eval()
 
@@ -248,10 +244,7 @@ def test_strict_consume_zero_snapshot_matches_no_ttt():
     with torch.no_grad():
         zero_out = model(input_ids=input_ids, fast_weights=zero_snapshot).logits
 
-    # Force-disable adapter on this model: zero its conv (W_target init is
-    # random sparse-diag — but since fast_weights override skips conv path,
-    # this is unnecessary; we instead compare against a model with use_ttt=False
-    # of identical base weights).
+    # Force-disable adapter on this model
     cfg_off = _tiny_config(use_ttt=False)
     model_off = Gemma3ForCausalLMTTT(cfg_off).eval()
     # Copy matching params over so only the MLP-path difference is tested.
@@ -267,9 +260,6 @@ def test_strict_consume_zero_snapshot_matches_no_ttt():
 
 
 def test_strict_consume_runs_and_ignores_question_inputs():
-    """A real (random) snapshot can be consumed; output is finite and
-    deterministic w.r.t. the snapshot value (not the input contents of TTT
-    layers' chunked update path, which is bypassed)."""
     cfg = _tiny_config(use_ttt=True, ttt_layers=(0, 2))
     model = Gemma3ForCausalLMTTT(cfg).eval()
 
@@ -292,20 +282,6 @@ def test_strict_consume_runs_and_ignores_question_inputs():
 
 
 def test_strict_snapshot_matches_paper_two_chunk_decomposition():
-    """End-to-end semantic check on the MLP module:
-
-    For an input that is exactly two TTT chunks [a, b], paper-style forward([a,b])
-    processes chunk b with effective W_down = W_down^{(0)} + η · ΔW_a, where
-    ΔW_a is the rank-1 delta computed from chunk a's (z, V̂).
-
-    Strict ingest on [a] alone (a single-chunk input) should produce a snapshot
-    equal to that same ΔW_a (un-scaled by η). Then strict consumer on [b] alone,
-    given that snapshot, applies the same W_eff to chunk b's z.
-
-    Therefore: paper output at the chunk-b positions == strict consumer output
-    on b. This is the cleanest direct equivalence we can assert (full forwards
-    differ because attention sees a different prefix).
-    """
     torch.manual_seed(7)
     cfg = _tiny_config(use_ttt=True, ttt_layers=(0,))
     model = Gemma3ForCausalLMTTT(cfg).eval()
@@ -338,7 +314,6 @@ def test_strict_snapshot_matches_paper_two_chunk_decomposition():
 
 
 def test_strict_freeze_still_isolates_grads():
-    """The new code paths must not introduce trainable params outside the adapter."""
     cfg = _tiny_config(use_ttt=True)
     model = Gemma3ForCausalLMTTT(cfg)
     model.freeze_base_model()
@@ -366,11 +341,6 @@ def test_strict_freeze_still_isolates_grads():
 
 @pytest.mark.slow
 def test_loads_real_gemma3_checkpoint():
-    """Verify base Gemma3 weights load cleanly into the TTT model.
-
-    Skipped by default — this downloads ~2GB and requires HF auth + Gemma TOU
-    acceptance. Run with: pytest -v -m slow
-    """
     repo = "google/gemma-3-1b-it"
     cfg = Gemma3TTTConfig.from_pretrained(repo, use_ttt=True, ttt_layers=[0, 6, 12, 18, 24])
     model = Gemma3ForCausalLMTTT.from_pretrained(repo, config=cfg, torch_dtype=torch.float32)

@@ -39,13 +39,8 @@ from train.main import (
 )
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
 @pytest.fixture(scope="module")
 def gpt2_tokenizer():
-    """A tiny, dependency-free tokenizer for dataset tests."""
     tok = AutoTokenizer.from_pretrained("gpt2")
     if tok.pad_token_id is None:
         tok.pad_token = tok.eos_token
@@ -110,8 +105,6 @@ def test_tokenize_truncates_to_max_length(gpt2_tokenizer):
 
 
 def test_collator_pads_and_creates_labels(gpt2_tokenizer):
-    """End-to-end check that _tokenize + collator produce a properly batched
-    tensor. This is exactly what the Trainer's DataLoader sees."""
     out = _tokenize(
         {"text": ["short", "this one is noticeably longer than the other"]},
         gpt2_tokenizer, "text", max_length=64,
@@ -162,29 +155,6 @@ def test_format_longalpaca_handles_missing_keys():
 def test_build_dataset_unknown_name_raises(gpt2_tokenizer):
     with pytest.raises(ValueError, match="unknown dataset"):
         build_dataset("not-a-dataset", gpt2_tokenizer, max_length=32, max_samples=4)
-
-
-# ---------------------------------------------------------------------------
-# Freeze contract (covered more deeply in models/hf_gemma3/test_gemma3.py;
-# this duplicate exists so train/ has a self-contained sanity check).
-# ---------------------------------------------------------------------------
-
-def test_freeze_base_model_keeps_ttt_and_down_proj_trainable():
-    cfg = _tiny_ttt_config(use_ttt=True)
-    model = Gemma3ForCausalLMTTT(cfg)
-    model.freeze_base_model()
-    trainable = {n for n, p in model.named_parameters() if p.requires_grad}
-    assert trainable, "expected trainable params"
-    assert any("ttt_conv" in n for n in trainable)
-    assert any("ttt_proj" in n for n in trainable)
-    assert any("down_proj" in n for n in trainable)
-
-    # down_proj must be trainable only on TTT layers (and frozen elsewhere).
-    ttt_layers = set(cfg.ttt_layers)
-    for name, p in model.named_parameters():
-        if "down_proj" in name and "ttt" not in name:
-            layer_idx = int(name.split(".")[2])
-            assert p.requires_grad == (layer_idx in ttt_layers), name
 
 
 # ---------------------------------------------------------------------------
@@ -348,8 +318,6 @@ def test_samples_tag_formatting():
     reason="accelerate is required for HF Trainer; install with `pip install accelerate`",
 )
 def test_train_on_dataset_runs_one_step(gpt2_tokenizer, tmp_path: Path):
-    """Verify train_on_dataset wires Trainer/data correctly and a single step
-    produces gradients only on TTT + down_proj params."""
     # Build a tiny in-memory dataset that mimics what _tokenize produces.
     samples = [
         gpt2_tokenizer("hello world short", truncation=True, max_length=16),
