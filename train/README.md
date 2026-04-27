@@ -124,8 +124,7 @@ import wandb; wandb.login()   # optional, but on by default — pass --no-wandb 
 # Cell 5 — train + push (LongAlpaca)
 !python -m train.main \
     --dataset longalpaca \
-    --hf-user <your-hf-user> \
-    --max-length 4096            # easier on T4 memory
+    --hf-user <your-hf-user> 
 ```
 
 Tips:
