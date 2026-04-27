@@ -12,30 +12,36 @@ We isolate the first contribution by **freezing the base model and training only
 
 ## Approach
 
-Use `google/gemma-3-1b-it` (26 layers, hidden 1152, GeGLU MLPs, 32K context) as the base. We implement In-Place TTT as a drop-in enhancement: a `Conv1D` + `W_target` adapter is added to the MLP of selected layers, gated on `config.use_ttt`. Only the adapter parameters receive gradients during training; the base model is fully frozen.
+Use `google/gemma-3-1b-it` (26 layers, hidden 1152, GeGLU MLPs with intermediate 6912, 32K context) as the base. We implement In-Place TTT as a drop-in enhancement: a `Conv1D` + `W_target` adapter is added to the MLP of the global-attention layers `[0, 6, 12, 18, 24]`, gated on `config.use_ttt`.
 
-We skip continual pretraining entirely and train only via long-context supervised finetuning (~100M–500M tokens at 4K–8K context, FineWeb-Edu).
+We **skip continual pretraining entirely** and pretrain the adapter only. The base model is fully frozen except for the `down_proj` (W_down) of the TTT layers — that surface is the one the per-chunk ΔW updates, so it is trained jointly with `Conv1D` + `W_target`. Every other parameter (embeddings, attention, gate/up_proj, norms, lm_head, and the down_proj of all non-TTT layers) is `requires_grad=False`.
+
+Primary training corpus: **500k samples of `roneneldan/TinyStories`** (short narratives, ~2M total). `Yukang/LongAlpaca-12k` is also supported as a long-context variant — note it caps at **12k samples**, so we run it for 2 epochs by default to compensate.
 
 ### Evaluation (NVIDIA RULER protocol)
 
-- **ICL baseline**: input text is prepended to the context. A fresh frozen model with the full context is loaded per question.
-- **In-Place TTT**: the model processes the input text and updates its fast weights. A fresh frozen model + pretrained TTT modules (no input context in the prompt) is loaded per question, relying on weight-compressed knowledge.
+Three configurations, each with a fresh frozen model loaded per question:
 
-Tested across context lengths from 1K to 32K tokens on RULER tasks (single/multi-hop NIAH, variable tracking, QA). Metrics: answer accuracy, GPU memory, inference latency.
+- **ICL baseline** — input text prepended to the context; vanilla Gemma3.
+- **ICL + In-Place TTT** — input text prepended to the context; the model also has a pretrained TTT adapter.
+- **In-Place TTT (no ICL)** — the model processes the input text and updates its fast weights; the question is asked with an empty context, relying entirely on the weight-compressed knowledge.
+
+Tested across 1K / 4K / 8K / 16K / 32K context lengths on RULER tasks (single- and multi-hop NIAH, variable tracking, QA). Metrics: answer accuracy, GPU memory, inference latency, plus a needle-position × accuracy heatmap.
 
 ## Repository layout
 
 ```
 In-Place-Test-Time-Training/
-├── models/
-│   └── hf_gemma3/
-│       ├── config_gemma3.py     # Gemma3TTTConfig: subclasses upstream Gemma3TextConfig, adds TTT fields
-│       ├── model_gemma3.py      # Gemma3MLPTTT, Gemma3DecoderLayerTTT, Gemma3TextModelTTT, Gemma3ForCausalLMTTT
-│       └── test_gemma3.py       # pytest suite: instantiation, forward, generate, save/load round-trip, freeze
+├── models/hf_gemma3/
+│   ├── config_gemma3.py         # Gemma3TTTConfig: subclasses upstream Gemma3TextConfig, adds TTT fields
+│   ├── model_gemma3.py          # Gemma3MLPTTT, Gemma3DecoderLayerTTT, Gemma3TextModelTTT, Gemma3ForCausalLMTTT
+│   └── test_gemma3.py           # pytest suite: instantiation, forward, generate, save/load round-trip, freeze
 ├── train/
-│   └── main.py                  # training entry point (frozen base + TTT-adapter SFT)
-├── eval/
-│   └── ruler.py                 # RULER evaluation harness
+│   ├── main.py                  # training entry point (frozen base + TTT-adapter pretraining)
+│   ├── test_main.py             # pytest suite: tokenize, freeze, save, wandb, CLI plumbing
+│   └── README.md                # training details, default hyperparameters, Colab walkthrough
+├── benchmark/                   # RULER-style evaluation harness (configs, data_gen, eval, scripts)
+├── third_party/RULER/           # NVIDIA RULER as a git submodule
 ├── Makefile                     # convenience commands (see `make help`)
 ├── pyproject.toml               # deps managed by uv
 ├── LICENSE                      # Apache 2.0
@@ -50,15 +56,15 @@ In-Place-Test-Time-Training/
 - `Gemma3MLPTTT` — Gemma3 MLP with optional `ttt_proj` (W_target) + `ttt_conv` modules, chunked TTT update in `forward(x, t=...)`.
 - `Gemma3DecoderLayerTTT` — Gemma3 decoder layer, near-mirror of upstream; only delta is a `target_states` kwarg threaded into `mlp(...)`.
 - `Gemma3PreTrainedModelTTT` — inherits from upstream `Gemma3PreTrainedModel`. Custom `_init_weights` does diagonal init for `TTTLinear` (near-identity) and zero init for `TTTConv1d` (no-op start), and defers everything else to `super()` so `_is_hf_initialized` skip-flags are honored and loaded checkpoints aren't trampled.
-- `Gemma3TextModelTTT`, `Gemma3ForCausalLMTTT` — backbone + LM head. `freeze_base_model()` on the LM keeps `ttt_proj` (W_target), `ttt_conv`, and the MLP `down_proj` (W_down) trainable; everything else is `requires_grad=False`.
+- `Gemma3TextModelTTT`, `Gemma3ForCausalLMTTT` — backbone + LM head. `freeze_base_model()` on the LM keeps `ttt_proj` (W_target), `ttt_conv`, and the `down_proj` (W_down) of the **TTT layers only** trainable; every other parameter — including `down_proj` on non-TTT layers — is `requires_grad=False`.
 
 When `config.use_ttt=False`, the TTT branches are skipped entirely and the model behaves identically to upstream Gemma3.
 
 ## Setup
 
 ```bash
-make install       # uv sync --all-groups
-make test          # fast tests (skip slow ones)
+make install       # uv sync --all-groups + RULER submodule + nltk data + PG-essay haystack
+make test          # fast tests over models/ and train/ (skips @slow)
 make test-slow     # downloads google/gemma-3-1b-it; needs HF auth + Gemma TOU acceptance
 ```
 
@@ -77,7 +83,7 @@ config = Gemma3TTTConfig.from_pretrained(
     ttt_lr=0.3,
 )
 model = Gemma3ForCausalLMTTT.from_pretrained("google/gemma-3-1b-it", config=config)
-model.freeze_base_model()            # ttt_proj, ttt_conv, and down_proj get gradients
+model.freeze_base_model()            # ttt_proj, ttt_conv, and down_proj on TTT layers get gradients
 ```
 
 ### From a trained checkpoint (local)
@@ -98,19 +104,25 @@ model = AutoModelForCausalLM.from_pretrained(
 
 `trust_remote_code=True` is required because `Gemma3ForCausalLMTTT` is not part of upstream `transformers`.
 
+#### HF Repos
+- https://huggingface.co/hungngo04/gemma-3-1b-it-ttt-tinystories-500k
+
+
 ## Training
 
-`train/main.py` trains the TTT adapters (`ttt_conv`, `ttt_proj`/W_target) plus the MLP `down_proj` (W_down) on a single dataset selected via `--dataset`, then pushes the result to the Hub (bundled with the modeling code + `auto_map`).
+`train/main.py` pretrains the TTT adapters (`ttt_conv`, `ttt_proj`/W_target) and the TTT-layer `down_proj` (W_down) on a single dataset selected via `--dataset`, then pushes the result to the Hub (bundled with the modeling code + `auto_map`).
 
 ```bash
+# Primary run: 500k TinyStories samples
 make train-tinystories HF_USER=<you>
+# Long-context variant
 make train-longalpaca  HF_USER=<you>
 # or directly:
-uv run python -m train.main --dataset tinystories --hf-user <you>
+uv run python -m train.main --dataset tinystories --hf-user <you> --max-samples 500000
 uv run python -m train.main --dataset longalpaca  --hf-user <you>
 ```
 
-Supported datasets: `tinystories` (`roneneldan/TinyStories`) and `longalpaca` (`Yukang/LongAlpaca-12k`). See [`train/README.md`](train/README.md) for what's trained, per-dataset defaults, full CLI flags, and a Colab walkthrough.
+Supported datasets: `tinystories` (`roneneldan/TinyStories`) and `longalpaca` (`Yukang/LongAlpaca-12k`). See [`train/README.md`](train/README.md) for the full table of default hyperparameters, every CLI flag, wandb setup, and a Colab walkthrough.
 
 ## Pushing to the HuggingFace Hub
 
@@ -124,7 +136,7 @@ For manually-built checkpoints, `make push-hub HF_REPO_ID=... CKPT_DIR=...` is s
 make eval
 ```
 
-Runs the RULER-style protocol described above against vanilla Gemma3-1B (baseline) and Gemma3-1B + TTT adapter, reporting accuracy / memory / latency vs context length.
+Runs the RULER-style protocol described above against the three configurations — ICL baseline, ICL + TTT, and TTT-only — reporting accuracy, GPU memory, and inference latency as a function of context length, plus a needle-position × accuracy heatmap. The harness lives under `benchmark/` (configs, data_gen, eval, scripts) and uses NVIDIA RULER from `third_party/RULER/` as a submodule. See [`benchmark/README.md`](benchmark/README.md) for details.
 
 ## Make targets
 
@@ -145,6 +157,10 @@ Run `make help` for the full list. Highlights:
 ## Tech stack
 
 PyTorch, HuggingFace Transformers, NVIDIA RULER, HuggingFace Datasets, Weights & Biases.
+
+## Research question
+
+> Can the TTT adapter modules (Conv1D, W_target) be trained while keeping the base model frozen, and still recover some fraction of the long-context gains reported in the paper?
 
 ## Expected outcomes
 
