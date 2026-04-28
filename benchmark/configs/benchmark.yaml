@@ -4,14 +4,6 @@ full_eval: false
 tokenizer_model_id: google/gemma-3-1b-it
 
 tasks:
-  - niah_single_1
-  - niah_single_2
-  - niah_single_3
-  - niah_multikey_1
-  - niah_multikey_2
-  - niah_multikey_3
-  - niah_multivalue
-  - niah_multiquery
   - vt
   - cwe
   - fwe
@@ -40,7 +32,7 @@ needle_positions:
   - late
 
 generation:
-  max_new_tokens: 128
+  max_new_tokens: 16
   temperature: 0.0
   do_sample: false
 
