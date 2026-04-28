@@ -1,6 +1,6 @@
 # Long-Context Retrieval Benchmark
 
-Eval harness for `Gemma 3 1B` (vanilla vs + TTT adapter) on long-context retrieval. Tasks are produced by NVIDIA/RULER (vendored as a git submodule under `third_party/RULER`); their generators run as subprocesses, output is mapped onto our JSONL schema, and our predictor abstraction handles ICL / paper-style TTT / strict TTT modes uniformly.
+Eval harness for `Gemma 3 1B` (vanilla vs + TTT adapter) on long-context retrieval. Tasks are produced by NVIDIA/RULER (vendored as a git submodule under `third_party/RULER`); their generators run as subprocesses, output is mapped onto our JSONL schema, and our predictor abstraction handles in-context / paper-style TTT / strict TTT modes uniformly.
 
 ## Tasks (RULER variants)
 
@@ -24,7 +24,7 @@ QA tasks (`qa_1` / `qa_2`) are not included — they require external dataset do
 
 All three run on the same example set.
 
-- `icl` — prompt = `[doc, q]`. Single forward. Vanilla baseline. (ATTENTION)
+- `in_context` — prompt = `[doc, q]`. Single forward. Vanilla baseline. (ATTENTION)
 - `ttt_paper` — prompt = `[doc, q]`. Single forward; TTT layers update fast weights chunk-by-chunk during prefill, reset between examples. Matches the paper's RULER eval. (ATTENTION + TTT)
 - `ttt_strict` — two-phase. (1) Ingest: forward over doc only, snapshot per-layer cumulative `ΔW`. (2) Answer: forward over `q` only with the snapshot patched in. Doc absent from answer prompt — fast weights must substitute for context, not aid it. (TTT)
 
@@ -56,7 +56,7 @@ echo 'HF_TOKEN=hf_xxx' > .env             # accept Gemma license at HF first
 
 ```bash
 uv run python -m benchmark.scripts.generate --profile dev
-uv run python -m benchmark.scripts.evaluate --profile dev --predictor benchmark.eval.factories:gemma3_icl_factory
+uv run python -m benchmark.scripts.evaluate --profile dev --predictor benchmark.eval.factories:gemma3_in_context_factory
 uv run python -m benchmark.scripts.evaluate --profile dev --predictor benchmark.eval.factories:gemma3_ttt_paper_factory
 uv run python -m benchmark.scripts.evaluate --profile dev --predictor benchmark.eval.factories:gemma3_ttt_strict_factory
 uv run python -m benchmark.scripts.aggregate
@@ -75,7 +75,7 @@ from benchmark.eval.predictor import SinglePassPredictor, StrictTTTPredictor
 
 def my_factory(cfg):
     model, tok = load_my_model(...)
-    return SinglePassPredictor("my-model", "icl", make_my_generate_fn(model, tok))
+    return SinglePassPredictor("my-model", "in_context", make_my_generate_fn(model, tok))
 ```
 
 Run with `--predictor my_module:my_factory`.

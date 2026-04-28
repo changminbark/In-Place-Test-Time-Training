@@ -1,22 +1,22 @@
 """Predictor abstraction.
 
 The eval harness does not depend on any particular model implementation. A
-concrete predictor is plugged in by the caller (e.g. vanilla HF Gemma 3 for ICL,
-or the TTT-enabled model for ttt_paper / ttt_strict).
+concrete predictor is plugged in by the caller (e.g. vanilla HF Gemma 3 for the
+in-context baseline, or the TTT-enabled model for ttt_paper / ttt_strict).
 
 Three modes are supported:
 
-- "icl"        — vanilla baseline; single-forward; prompt = doc + question.
+- "in_context" — vanilla baseline; single-forward; prompt = doc + question.
 - "ttt_paper"  — paper-style TTT; single-forward; prompt = doc + question;
                  fast weights update during prefill of that prompt and reset
-                 between examples. Wired exactly like ICL but the model has
-                 use_ttt=True.
+                 between examples. Wired exactly like the in-context baseline
+                 but the model has use_ttt=True.
 - "ttt_strict" — stricter two-phase TTT; ingest(document) snapshots fast
                  weights, then answer(question_only) uses the snapshot.
                  Document is NOT in the answer prompt.
 
-Both ICL and ttt_paper use the single-call SinglePassPredictor. ttt_strict
-uses the two-phase StrictTTTPredictor.
+Both in_context and ttt_paper use the single-call SinglePassPredictor.
+ttt_strict uses the two-phase StrictTTTPredictor.
 """
 
 from __future__ import annotations
@@ -38,14 +38,14 @@ class Predictor(Protocol):
     """Common interface. `predict` takes a full example and returns one answer."""
 
     model_name: str
-    mode: str  # "icl" | "ttt_paper" | "ttt_strict"
+    mode: str  # "in_context" | "ttt_paper" | "ttt_strict"
 
     def predict(self, example: dict, max_new_tokens: int = 16) -> PredictionResult:
         ...
 
 
 class SinglePassPredictor:
-    """One generate call. Prompt = doc + question. Used for both 'icl' and 'ttt_paper'.
+    """One generate call. Prompt = doc + question. Used for both 'in_context' and 'ttt_paper'.
 
     The difference between modes is purely the underlying generate_fn (vanilla
     model vs use_ttt=True model). Mode is recorded for result aggregation only.
@@ -62,8 +62,8 @@ class SinglePassPredictor:
         generate_fn: callable(prompt: str, max_new_tokens: int)
                        -> (text: str, latency_ms: float, peak_mb: float|None)
         """
-        if mode not in ("icl", "ttt_paper"):
-            raise ValueError(f"SinglePassPredictor mode must be icl|ttt_paper, got {mode!r}")
+        if mode not in ("in_context", "ttt_paper"):
+            raise ValueError(f"SinglePassPredictor mode must be in_context|ttt_paper, got {mode!r}")
         self.model_name = model_name
         self.mode = mode
         self._generate = generate_fn
@@ -149,9 +149,9 @@ class EchoPredictor:
     Useful for verifying the eval harness end-to-end before a real model is wired in.
     """
 
-    def __init__(self, model_name: str = "echo", mode: str = "icl"):
-        if mode not in ("icl", "ttt_paper", "ttt_strict"):
-            raise ValueError(f"EchoPredictor mode must be icl|ttt_paper|ttt_strict, got {mode!r}")
+    def __init__(self, model_name: str = "echo", mode: str = "in_context"):
+        if mode not in ("in_context", "ttt_paper", "ttt_strict"):
+            raise ValueError(f"EchoPredictor mode must be in_context|ttt_paper|ttt_strict, got {mode!r}")
         self.model_name = model_name
         self.mode = mode
 

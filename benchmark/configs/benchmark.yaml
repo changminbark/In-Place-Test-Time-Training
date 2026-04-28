@@ -30,7 +30,7 @@ profiles:
     examples_per_task_length: 100
 
 modes:
-  - icl
+  - in_context
   - ttt_paper
   - ttt_strict
 

@@ -22,9 +22,9 @@ Primary training corpus: **500k samples of `roneneldan/TinyStories`** (short nar
 
 Three configurations, each with a fresh frozen model loaded per question:
 
-- **ICL baseline** — input text prepended to the context; vanilla Gemma3.
-- **ICL + In-Place TTT** — input text prepended to the context; the model also has a pretrained TTT adapter.
-- **In-Place TTT (no ICL)** — the model processes the input text and updates its fast weights; the question is asked with an empty context, relying entirely on the weight-compressed knowledge.
+- **In-context baseline** — input text prepended to the context; vanilla Gemma3.
+- **In-context + In-Place TTT** — input text prepended to the context; the model also has a pretrained TTT adapter.
+- **In-weights (In-Place TTT only)** — the model processes the input text and updates its fast weights; the question is asked with an empty context, relying entirely on the weight-compressed knowledge.
 
 Tested across 1K / 4K / 8K / 16K / 32K context lengths on RULER tasks (single- and multi-hop NIAH, variable tracking, QA). Metrics: answer accuracy, GPU memory, inference latency, plus a needle-position × accuracy heatmap.
 
@@ -136,7 +136,7 @@ For manually-built checkpoints, `make push-hub HF_REPO_ID=... CKPT_DIR=...` is s
 make eval
 ```
 
-Runs the RULER-style protocol described above against the three configurations — ICL baseline, ICL + TTT, and TTT-only — reporting accuracy, GPU memory, and inference latency as a function of context length, plus a needle-position × accuracy heatmap. The harness lives under `benchmark/` (configs, data_gen, eval, scripts) and uses NVIDIA RULER from `third_party/RULER/` as a submodule. See [`benchmark/README.md`](benchmark/README.md) for details.
+Runs the RULER-style protocol described above against the three configurations — in-context baseline, in-context + TTT, and in-weights TTT-only — reporting accuracy, GPU memory, and inference latency as a function of context length, plus a needle-position × accuracy heatmap. The harness lives under `benchmark/` (configs, data_gen, eval, scripts) and uses NVIDIA RULER from `third_party/RULER/` as a submodule. See [`benchmark/README.md`](benchmark/README.md) for details.
 
 ## Make targets
 

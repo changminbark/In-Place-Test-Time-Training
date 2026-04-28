@@ -107,7 +107,7 @@ class Gemma3MLPTTT(Gemma3MLP):
     #
     # Three call modes:
     #   1. Vanilla / paper-style (default): forward(x, t) -> Tensor.
-    #      Identical to the original implementation. Used by ICL and ttt_paper.
+    #      Identical to the original implementation. Used by in_context and ttt_paper.
     #   2. Snapshot producer (strict ingest): forward(x, t, return_fast_weights=True)
     #      -> (Tensor, fw). Runs paper-style chunked update, additionally returns
     #      `fw` of shape (B, d, d_ff) — the un-scaled cumulative ΔW across ALL

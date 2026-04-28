@@ -15,7 +15,7 @@ seed), read the resulting jsonl, and remap fields:
 
 `document` and `question` are split at RULER's `answer_prefix` anchor (the
 suffix added to the prompt right before the model would generate). This keeps
-ICL/TTT-paper/TTT-strict behaviorally consistent with our predictor templates,
+in_context / TTT-paper / TTT-strict behaviorally consistent with our predictor templates,
 while preserving every token RULER chose to put in the prompt.
 """
 

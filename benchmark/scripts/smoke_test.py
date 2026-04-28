@@ -46,11 +46,11 @@ def main() -> None:
     results_root = Path("benchmark/results/raw/smoke")
     if results_root.exists():
         shutil.rmtree(results_root)
-    predictor = EchoPredictor(model_name="echo", mode="icl")
+    predictor = EchoPredictor(model_name="echo", mode="in_context")
 
     summary = run_benchmark(
         dataset_path=out_path,
-        results_path=results_root / "echo__icl" / f"{SMOKE_TASK}_{SMOKE_LENGTH}.jsonl",
+        results_path=results_root / "echo__in_context" / f"{SMOKE_TASK}_{SMOKE_LENGTH}.jsonl",
         predictor=predictor,
         max_new_tokens=16,
     )

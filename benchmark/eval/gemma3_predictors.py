@@ -3,7 +3,7 @@
 Exposes three factory functions consumed by `benchmark.scripts.evaluate` via
 the `--predictor module:function` flag:
 
-  - gemma3_icl_factory          → vanilla Gemma3 baseline (use_ttt=False)
+  - gemma3_in_context_factory   → vanilla Gemma3 baseline (use_ttt=False)
   - gemma3_ttt_paper_factory    → TTT model, single-call eval (paper-style)
   - gemma3_ttt_strict_factory   → TTT model, two-phase ingest→answer eval
 
@@ -126,7 +126,7 @@ def load_gemma3_ttt_model(
 def make_generate_fn(model, tokenizer):
     """Returns generate_fn(prompt, max_new_tokens) -> (text, latency_ms, peak_mb).
 
-    Used by both ICL and ttt_paper modes — they differ only in which model is loaded.
+    Used by both in_context and ttt_paper modes — they differ only in which model is loaded.
     """
     device = _device_for(model)
     pad_id = tokenizer.pad_token_id or tokenizer.eos_token_id
@@ -219,12 +219,12 @@ def _short_name(repo: str) -> str:
     return repo.rstrip("/").split("/")[-1]
 
 
-def gemma3_icl_factory(cfg: dict):
+def gemma3_in_context_factory(cfg: dict):
     repo = cfg.get("model_id", DEFAULT_BASE_MODEL_ID)
     model, tok = load_gemma3_ttt_model(repo, use_ttt=False)
     return SinglePassPredictor(
         model_name=_short_name(repo),
-        mode="icl",
+        mode="in_context",
         generate_fn=make_generate_fn(model, tok),
     )
 

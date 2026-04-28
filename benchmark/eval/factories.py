@@ -13,8 +13,8 @@ from __future__ import annotations
 from .predictor import EchoPredictor
 
 
-def echo_icl_factory(cfg: dict):
-    return EchoPredictor(model_name="echo", mode="icl")
+def echo_in_context_factory(cfg: dict):
+    return EchoPredictor(model_name="echo", mode="in_context")
 
 
 def echo_ttt_paper_factory(cfg: dict):
@@ -29,8 +29,8 @@ def echo_ttt_strict_factory(cfg: dict):
 # pull in torch/transformers/models.* even when only the echo factories are
 # needed; instead, expose names that import on first call.
 
-def gemma3_icl_factory(cfg: dict):
-    from .gemma3_predictors import gemma3_icl_factory as _f
+def gemma3_in_context_factory(cfg: dict):
+    from .gemma3_predictors import gemma3_in_context_factory as _f
     return _f(cfg)
 
 

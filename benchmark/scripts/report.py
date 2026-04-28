@@ -8,7 +8,7 @@ Reads per-example JSONL result rows under --raw-root and prints:
 Usage:
     python -m benchmark.scripts.report
     python -m benchmark.scripts.report --raw-root benchmark/results/raw/dev
-    python -m benchmark.scripts.report --models gemma-3-1b-it --modes icl ttt
+    python -m benchmark.scripts.report --models gemma-3-1b-it --modes in_context ttt
 """
 
 from __future__ import annotations

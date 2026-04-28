@@ -6,11 +6,11 @@ loaded config dict and returns a Predictor instance. This keeps the eval harness
 decoupled from the model implementation.
 
 Two built-in predictor factories:
-  benchmark.eval.factories:echo_icl_factory
+  benchmark.eval.factories:echo_in_context_factory
   benchmark.eval.factories:echo_ttt_strict_factory
 
 Usage:
-    python -m benchmark.scripts.evaluate --profile dev --predictor benchmark.eval.factories:echo_icl_factory
+    python -m benchmark.scripts.evaluate --profile dev --predictor benchmark.eval.factories:echo_in_context_factory
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ def main() -> None:
     parser.add_argument("--config", default="benchmark/configs/benchmark.yaml")
     parser.add_argument("--profile", choices=["dev", "full"], default="dev")
     parser.add_argument("--predictor", required=True,
-                        help="module:function returning a Predictor (e.g. benchmark.eval.factories:echo_icl_factory)")
+                        help="module:function returning a Predictor (e.g. benchmark.eval.factories:echo_in_context_factory)")
     parser.add_argument("--data-root", default=None)
     parser.add_argument("--results-root", default=None)
     parser.add_argument("--limit", type=int, default=None,
