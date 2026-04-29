@@ -135,7 +135,13 @@ class StrictTTTPredictor:
         if self._reset is not None:
             self._reset()
         state, ingest_ms, ingest_peak = self._ingest(example["document"])
-        prompt = self.prompt_template.format(question=example["question"])
+        # Use the example's pre-rendered strict prompt if provided (RULER tasks
+        # bake `strict_answer_prompt` to avoid wrapper-induced "Question:"/
+        # "Answer:" duplication); otherwise fall back to the default template.
+        if example.get("strict_answer_prompt"):
+            prompt = example["strict_answer_prompt"]
+        else:
+            prompt = self.prompt_template.format(question=example["question"])
         text, answer_ms, answer_peak = self._answer(prompt, state, max_new_tokens)
         total_ms = ingest_ms + answer_ms
         peaks = [x for x in (ingest_peak, answer_peak) if x is not None]

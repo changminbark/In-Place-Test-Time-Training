@@ -204,6 +204,14 @@ def _to_our_schema(row: Dict, task: str, target_tokens: int, idx: int, script: s
     if isinstance(outputs, str):
         outputs = [outputs]
     answer = outputs[0] if outputs else ""
+    # `prompt` is RULER's full intended string — instructions + context + the
+    # already-inline question + answer_prefix. The single-pass predictor uses
+    # this verbatim instead of re-wrapping with its default "Document/Question/
+    # Answer" template, which previously duplicated the "Question:" prefix and
+    # "Answer:" suffix that RULER bakes in.
+    full_prompt = f"{document}\n{question}"
+    # For ttt_strict, the answer-phase sees only the question (+ answer_prefix);
+    # the document is handled by the ingest phase.
     return {
         "id": f"{task}_{target_tokens}_{idx:04d}",
         "task": task,
@@ -212,6 +220,8 @@ def _to_our_schema(row: Dict, task: str, target_tokens: int, idx: int, script: s
         "question": question,
         "answer": answer,
         "answer_aliases": list(outputs),
+        "prompt": full_prompt,
+        "strict_answer_prompt": question,
         "metadata": {
             "task_variant": task,
             "ruler_length": row.get("length"),
