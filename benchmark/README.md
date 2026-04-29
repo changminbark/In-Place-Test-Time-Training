@@ -84,6 +84,39 @@ Override checkpoints via `GEMMA3_BASE_MODEL_ID` / `GEMMA3_TTT_MODEL_ID` env vars
 
 Smoke test (one task, 3 examples, no real model needed): `uv run python -m benchmark.scripts.smoke_test`.
 
+## Running on a remote SSH server
+
+A full eval is multi-hour. If you run a command directly over SSH and the connection drops, the shell receives SIGHUP and your job dies — detach the process from the SSH session.
+
+**`tmux`** (default — survives disconnects, lets you re-attach for live output)
+
+```bash
+ssh user@server
+tmux new -s eval
+uv run python -m benchmark.scripts.evaluate --profile full --predictor benchmark.eval.factories:gemma3_ttt_paper_factory 2>&1 | tee eval.log
+# detach: Ctrl-b then d
+# reconnect: ssh in, then `tmux attach -t eval`
+```
+
+**`nohup` + background** (fire-and-forget)
+
+```bash
+ssh user@server 'cd /path/to/repo && nohup uv run python -m benchmark.scripts.evaluate --profile full --predictor benchmark.eval.factories:gemma3_ttt_paper_factory > eval.log 2>&1 &'
+# check progress: ssh in, then `tail -f eval.log`
+```
+
+**`systemd-run --user`** (logs via journalctl)
+
+```bash
+systemd-run --user --unit=eval --working-directory=/path/to/repo \
+  uv run python -m benchmark.scripts.evaluate --profile full --predictor benchmark.eval.factories:gemma3_ttt_paper_factory
+journalctl --user -u eval -f
+```
+
+If the server has Slurm, `sbatch` is the right answer for shared GPU clusters.
+
+Results land in `benchmark/results/` (gitignored) — make sure that path isn't on a tmpfs or scratch dir that gets wiped between sessions.
+
 ## Adding a predictor
 
 ```python

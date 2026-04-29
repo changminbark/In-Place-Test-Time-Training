@@ -1,6 +1,8 @@
 [submodule "third_party/RULER"]
 	path = third_party/RULER
 	url = https://github.com/NVIDIA/RULER.git
+	ignore = dirty
 [submodule "third_party/HELMET"]
 	path = third_party/HELMET
 	url = https://github.com/princeton-nlp/HELMET.git
+	ignore = dirty
