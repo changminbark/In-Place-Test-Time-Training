@@ -51,7 +51,8 @@ def main() -> None:
     factory = _load_predictor_factory(args.predictor)
     predictor = factory(cfg)
 
-    max_new_tokens = cfg["generation"]["max_new_tokens"]
+    default_max_new = cfg["generation"]["max_new_tokens"]
+    per_task_max_new = cfg.get("generation", {}).get("max_new_tokens_per_task", {}) or {}
     scoring_opts = {
         "lowercase": cfg["scoring"]["normalize_case"],
         "strip_whitespace": cfg["scoring"]["strip_whitespace"],
@@ -70,18 +71,20 @@ def main() -> None:
                 / f"{predictor.model_name}__{predictor.mode}"
                 / f"{task}_{target_tokens}.jsonl"
             )
+            mnt = int(per_task_max_new.get(task, default_max_new))
             summary = run_benchmark(
                 dataset_path=dataset_path,
                 results_path=results_path,
                 predictor=predictor,
-                max_new_tokens=max_new_tokens,
+                max_new_tokens=mnt,
                 limit=args.limit,
                 scoring_opts=scoring_opts,
             )
             print(
                 f"[eval] {task:18s} @ {target_tokens:6d} tok   "
                 f"n={summary['n']:4d}  acc={summary['accuracy']:.3f}  "
-                f"mean_latency_ms={summary['mean_latency_ms']:.1f}"
+                f"mean_latency_ms={summary['mean_latency_ms']:.1f}  "
+                f"max_new={mnt}"
             )
             all_summaries.append({
                 "task": task,

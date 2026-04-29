@@ -7,6 +7,10 @@ tasks:
   - vt
   - cwe
   - fwe
+  - helmet_trec_coarse
+  - helmet_banking77
+  - helmet_nq
+  - helmet_hotpotqa
 
 context_lengths:
   - 1024
@@ -32,9 +36,25 @@ needle_positions:
   - late
 
 generation:
-  max_new_tokens: 16
+  max_new_tokens: 16  # default for tasks not listed below
   temperature: 0.0
   do_sample: false
+  max_new_tokens_per_task:
+    # RULER tasks
+    vt: 30
+    cwe: 120
+    fwe: 50
+    # HELMET RAG (short factoid answers)
+    helmet_nq: 20
+    helmet_hotpotqa: 20
+    helmet_triviaqa: 20
+    helmet_popqa: 20
+    # HELMET ICL (single class label)
+    helmet_trec_coarse: 16
+    helmet_trec_fine: 16
+    helmet_banking77: 16
+    helmet_clinic150: 16
+    helmet_nlu: 16
 
 scoring:
   normalize_case: true

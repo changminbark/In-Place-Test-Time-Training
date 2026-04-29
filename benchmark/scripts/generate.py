@@ -44,15 +44,26 @@ def main() -> None:
     for task in tasks:
         for target_tokens in lengths:
             out_path = out_root / f"{task}_{target_tokens}.jsonl"
-            print(f"[gen] {task:18s} @ {target_tokens:6d}  →  {out_path}")
-            with out_path.open("w") as f:
-                for ex in generate_examples(
+            try:
+                rows = list(generate_examples(
                     task=task,
                     target_tokens=target_tokens,
                     num_samples=n_examples,
                     tokenizer_model_id=tokenizer_model_id,
                     seed=seed,
-                ):
+                ))
+            except KeyError as e:
+                # task doesn't support this length (e.g. HELMET ICL configured
+                # only for 8k/16k/32k). Skip without writing an empty file.
+                print(f"[skip] {task:18s} @ {target_tokens:6d}  ({e})")
+                continue
+            except FileNotFoundError as e:
+                # HELMET RAG needs a one-time data download; skip if absent.
+                print(f"[skip] {task:18s} @ {target_tokens:6d}  ({e.args[0].splitlines()[0]})")
+                continue
+            print(f"[gen] {task:18s} @ {target_tokens:6d}  →  {out_path}  ({len(rows)} rows)")
+            with out_path.open("w") as f:
+                for ex in rows:
                     f.write(json.dumps(ex) + "\n")
 
     print(f"[done] profile={args.profile} examples_per_task_length={n_examples}")

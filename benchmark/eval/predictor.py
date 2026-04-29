@@ -75,9 +75,15 @@ class SinglePassPredictor:
         )
 
     def predict(self, example: dict, max_new_tokens: int = 16) -> PredictionResult:
-        prompt = self.prompt_template.format(
-            document=example["document"], question=example["question"]
-        )
+        # If the example carries a fully-rendered prompt (e.g. HELMET tasks
+        # with task-specific templates), use it as-is; otherwise wrap document
+        # + question with the default template.
+        if "prompt" in example and example["prompt"]:
+            prompt = example["prompt"]
+        else:
+            prompt = self.prompt_template.format(
+                document=example["document"], question=example["question"]
+            )
         text, latency_ms, peak_mb = self._generate(prompt, max_new_tokens)
         return PredictionResult(
             prediction=text,

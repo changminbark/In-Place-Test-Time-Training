@@ -1,24 +1,34 @@
 # Long-Context Retrieval Benchmark
 
-Eval harness for `Gemma 3 1B` (vanilla vs + TTT adapter) on long-context retrieval. Tasks are produced by NVIDIA/RULER (vendored as a git submodule under `third_party/RULER`); their generators run as subprocesses, output is mapped onto our JSONL schema, and our predictor abstraction handles in-context / paper-style TTT / strict TTT modes uniformly.
+Eval harness for `Gemma 3 1B` (vanilla vs + TTT adapter) on long-context retrieval. Tasks come from two sources, both vendored as git submodules under `third_party/`:
 
-## Tasks (RULER variants)
+- **RULER** (`third_party/RULER`) — synthetic recall and aggregation. Generators run as subprocesses; their output is mapped onto our JSONL schema.
+- **HELMET** (`third_party/HELMET`) — real-world long-context tasks. ICL is HF-datasets backed (no extra download). RAG needs a one-time tarball pull (~4 GB).
+
+Predictors handle in-context / paper-style TTT / strict TTT modes uniformly across both sources.
+
+## Tasks
+
+### RULER (active set)
 
 | Task | RULER config | Description |
 |---|---|---|
-| `niah_single_1` | noise / words / numbers | Single needle in repetitive noise haystack |
-| `niah_single_2` | essay / words / numbers | Single needle in PG essays |
-| `niah_single_3` | essay / words / uuids | Single needle, UUID values (harder) |
-| `niah_multikey_1` | essay, k=4 | One of four keys queried |
-| `niah_multikey_2` | needle haystack, k=1 | Distractor needles surround the real one |
-| `niah_multikey_3` | needle haystack, k=1, uuids | UUID distractors and target |
-| `niah_multivalue` | essay, v=4 | One key, four values, retrieve all |
-| `niah_multiquery` | essay, q=4 | Four queries against four keys |
 | `vt` | noise, 1 chain × 4 hops | Variable-tracking |
 | `cwe` | freq=30/3, top-10 | Common-words extraction |
 | `fwe` | α=2.0 | Frequent-words extraction |
 
-QA tasks (`qa_1` / `qa_2`) are not included — they require external dataset downloads.
+NIAH variants were dropped — synthetic-token retrieval is dominated by attention and doesn't probe the fast-weight contribution. The RULER recall slice is largely a duplicate of HELMET's recall category.
+
+### HELMET (active set)
+
+| Task | Source | Lengths supported |
+|---|---|---|
+| `helmet_trec_coarse` | CogComp/trec (6-class) | 8k, 16k, 32k |
+| `helmet_banking77` | PolyAI/banking77 (77-class) | 8k, 16k, 32k |
+| `helmet_nq` | KILT NQ + retrieved Wikipedia | 8k, 16k, 32k |
+| `helmet_hotpotqa` | KILT HotpotQA + retrieved Wikipedia | 8k, 16k, 32k |
+
+Other HELMET ICL families (`helmet_trec_fine`, `helmet_clinic150`, `helmet_nlu`) and RAG families (`helmet_triviaqa`, `helmet_popqa`) are wired up but not in the default `tasks` list — add to `benchmark.yaml` to enable.
 
 ## Modes
 
@@ -50,7 +60,13 @@ Result row: `example_id`, `task`, `mode`, `model_name`, `context_length_target`,
 ```bash
 make install                              # uv sync + submodule + nltk + PG essays
 echo 'HF_TOKEN=hf_xxx' > .env             # accept Gemma license at HF first
+
+# HELMET RAG only — ~4 GB, populates third_party/HELMET/data/kilt/
+bash third_party/HELMET/scripts/download_data.sh
+# (or set HELMET_DATA_DIR=/path/to/helmet/data and download there)
 ```
+
+HELMET ICL pulls its underlying datasets (banking77, trec, etc.) on demand via the HF `datasets` cache; nothing extra to download up front.
 
 ## Run
 
@@ -89,6 +105,7 @@ benchmark/
   data/{dev,full}/         # gitignored
   data_gen/
     ruler_runner.py        # subprocess wrapper around RULER generators
+    helmet_runner.py       # in-process loader for HELMET ICL + RAG
   eval/
     predictor.py           # Predictor / SinglePassPredictor / StrictTTTPredictor
     runner.py
@@ -98,6 +115,8 @@ benchmark/
   scripts/                 # generate, evaluate, aggregate, report, plot, smoke_test
   results/                 # gitignored
 third_party/RULER/         # submodule — NVIDIA/RULER
+third_party/HELMET/        # submodule — princeton-nlp/HELMET
+                            # data/ subfolder is gitignored (download on demand)
 ```
 
 ## Validity

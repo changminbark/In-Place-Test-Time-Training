@@ -24,6 +24,7 @@ dependencies = [
     "beautifulsoup4>=4.12",
     # RULER tokenizer wrapper retries via tenacity
     "tenacity>=8.5",
+    "scipy>=1.17.1",
 ]
 
 [dependency-groups]
