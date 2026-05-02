@@ -119,6 +119,50 @@ def load_gemma3_ttt_model(
     model = cls.from_pretrained(
         repo_or_path, config=cfg, token=token, torch_dtype=torch_dtype
     ).to(device).eval()
+
+    # Workaround: in transformers 5.6.2 the streaming loader marks the
+    # conditionally-registered ttt_proj/ttt_conv tensors as UNEXPECTED and
+    # silently leaves them at their _init_weights values (zero conv, diagonal
+    # proj). Re-load them by hand from the safetensors shard so the TTT path
+    # actually fires at inference. See
+    #   benchmark/scripts/sweep_ttt_chunk.py for the diagnostic that surfaced
+    #   this.
+    if use_ttt:
+        from huggingface_hub import hf_hub_download
+        from safetensors import safe_open
+        try:
+            ckpt_path = hf_hub_download(repo_or_path, "model.safetensors", token=token)
+        except Exception:
+            ckpt_path = None
+        if ckpt_path is not None:
+            ttt_state: dict[str, torch.Tensor] = {}
+            with safe_open(ckpt_path, framework="pt") as f:
+                for k in f.keys():
+                    if "ttt_proj" in k or "ttt_conv" in k:
+                        ttt_state[k] = f.get_tensor(k).to(device=device, dtype=torch_dtype)
+            if ttt_state:
+                model.load_state_dict(ttt_state, strict=False)
+
+        # Hard guard: if the TTT modules were trained, ttt_conv must have
+        # non-zero weights. The default _init_weights gives ttt_conv exactly 0,
+        # so an all-zero ttt_conv after load means either the manual reload
+        # silently failed or we're loading an untrained checkpoint. Either way,
+        # the chunked-update path is mathematically a no-op and any "TTT"
+        # benchmark numbers would be measuring base-weight drift only.
+        ttt_conv_norms = {
+            name: p.float().norm().item()
+            for name, p in model.named_parameters()
+            if name.endswith("ttt_conv.weight")
+        }
+        if ttt_conv_norms and max(ttt_conv_norms.values()) == 0.0:
+            raise RuntimeError(
+                f"TTT load sanity check failed for {repo_or_path}: every "
+                f"ttt_conv.weight has L2=0 (init value). The TTT update path "
+                f"would silently produce zero contribution. Either the manual "
+                f"reload didn't run, or this checkpoint was never trained. "
+                f"Per-layer norms: {ttt_conv_norms}"
+            )
+
     tokenizer = AutoTokenizer.from_pretrained(repo_or_path, token=token)
     return model, tokenizer
 
