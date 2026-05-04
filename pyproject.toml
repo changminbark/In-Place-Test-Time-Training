@@ -25,9 +25,11 @@ dependencies = [
     # RULER tokenizer wrapper retries via tenacity
     "tenacity>=8.5",
     "scipy>=1.17.1",
+    "accelerate>=1.13.0",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
+    "safetensors>=0.7.0",
 ]

@@ -224,6 +224,7 @@ benchmark/__pycache__/
 # Trained / downloaded model artifacts
 checkpoints/
 models_cache/
+wandb/
 
 # HELMET RAG data (~4 GB tarball; download with bash third_party/HELMET/scripts/download_data.sh)
 third_party/HELMET/data/

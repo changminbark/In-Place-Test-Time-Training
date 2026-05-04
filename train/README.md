@@ -55,11 +55,11 @@ TTT-module knobs (defaults match the In-Place TTT paper):
 
 ```bash
 # from repo root
-huggingface-cli login                       # for base model + push
+hf login                       # for base model + push
 wandb login                                 # optional; auto-detected via WANDB_API_KEY
 
-python -m train.main --dataset tinystories --hf-user <hf-user>
-python -m train.main --dataset longalpaca  --hf-user <hf-user>
+python -m train.main --dataset tinystories --hf-user <hf-user> --ttt-chunk 128
+python -m train.main --dataset longalpaca  --hf-user <hf-user> --ttt-chunk 2048
 ```
 
 Each run pushes to `<hf-user>/<base>-ttt-<dataset>` (override with `--repo-id`). The pushed repo bundles `config_gemma3.py` + `model_gemma3.py` and sets `auto_map`, so consumers can just:
