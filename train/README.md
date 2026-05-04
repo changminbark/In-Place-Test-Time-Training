@@ -58,8 +58,8 @@ TTT-module knobs (defaults match the In-Place TTT paper):
 hf login                       # for base model + push
 wandb login                                 # optional; auto-detected via WANDB_API_KEY
 
-python -m train.main --dataset tinystories --hf-user <hf-user> --ttt-chunk 128
-python -m train.main --dataset longalpaca  --hf-user <hf-user> --ttt-chunk 2048
+uv run python -m train.main --dataset tinystories --hf-user <hf-user> --ttt-chunk 128
+uv run python -m train.main --dataset longalpaca  --hf-user <hf-user> --ttt-chunk 2048
 ```
 
 Each run pushes to `<hf-user>/<base>-ttt-<dataset>` (override with `--repo-id`). The pushed repo bundles `config_gemma3.py` + `model_gemma3.py` and sets `auto_map`, so consumers can just:
@@ -67,6 +67,22 @@ Each run pushes to `<hf-user>/<base>-ttt-<dataset>` (override with `--repo-id`).
 ```python
 AutoModelForCausalLM.from_pretrained("<hf-user>/<base>-ttt-tinystories", trust_remote_code=True)
 ```
+
+## Running on a remote SSH server
+
+Full training is multi-hour. If you run a command directly over SSH and the connection drops, the shell receives SIGHUP and your job dies — detach the process from the SSH session.
+
+**`tmux`** (default — survives disconnects, lets you re-attach for live output)
+
+```bash
+ssh user@server
+tmux new -s train
+uv run python -m train.main --dataset longalpaca  --hf-user <hf-user> --ttt-chunk 2048
+# detach: Ctrl-b then d
+# reconnect: ssh in, then `tmux attach -t train`
+```
+
+If the server has Slurm, `sbatch` is the right answer for shared GPU clusters.
 
 ### Other flags
 

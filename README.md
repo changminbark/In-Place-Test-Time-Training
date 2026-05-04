@@ -105,7 +105,8 @@ model = AutoModelForCausalLM.from_pretrained(
 `trust_remote_code=True` is required because `Gemma3ForCausalLMTTT` is not part of upstream `transformers`.
 
 #### HF Repos
-- https://huggingface.co/hungngo04/gemma-3-1b-it-ttt-tinystories-500k
+- https://huggingface.co/changminbark/gemma-3-1b-it-ttt-tinystories-500k
+- https://huggingface.co/changminbark/gemma-3-1b-it-ttt-longalpaca-full
 
 
 ## Training
