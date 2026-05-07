@@ -218,7 +218,6 @@ benchmark/data/smoke_full/
 # Eval outputs (regenerate: python -m benchmark.scripts.{evaluate,aggregate,plot})
 benchmark/results/raw/
 benchmark/results/summary/
-benchmark/results/plots/
 benchmark/__pycache__/
 
 # Trained / downloaded model artifacts
