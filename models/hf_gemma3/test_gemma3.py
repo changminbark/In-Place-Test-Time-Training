@@ -196,6 +196,46 @@ def test_save_and_load_pretrained_roundtrip():
     torch.testing.assert_close(ref_logits, new_logits, rtol=1e-5, atol=1e-5)
 
 
+def test_loaded_ttt_weights_survive_init_weights_pass():
+    """Regression test for the silent TTT-load bug.
+
+    Before the _is_hf_initialized-aware init in Gemma3PreTrainedModelTTT, the
+    post-load init_weights() pass clobbered loaded ttt_conv (zero) and
+    ttt_proj (diagonal) tensors with their init defaults — silently. Every
+    benchmark run on a trained TTT checkpoint was exercising a model whose
+    TTT path was mathematically a no-op.
+
+    The plain roundtrip test above doesn't catch this because both ref and
+    reloaded models share the same init defaults for TTT params. This test
+    explicitly fills the params with non-init values, saves, reloads, and
+    asserts the loaded tensors aren't the init defaults.
+    """
+    cfg = _tiny_config(use_ttt=True, ttt_layers=(0, 2))
+    model = Gemma3ForCausalLMTTT(cfg).eval()
+
+    sentinel: dict[str, torch.Tensor] = {}
+    for name, p in model.named_parameters():
+        if "ttt_conv" in name or "ttt_proj" in name:
+            with torch.no_grad():
+                p.data.normal_(mean=0.0, std=0.5)
+            sentinel[name] = p.detach().clone()
+
+    assert sentinel, "tiny config should produce at least one TTT param"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        model.save_pretrained(tmp)
+        reloaded = Gemma3ForCausalLMTTT.from_pretrained(tmp).eval()
+
+    reloaded_params = dict(reloaded.named_parameters())
+    for name, expected in sentinel.items():
+        loaded = reloaded_params[name]
+        torch.testing.assert_close(loaded, expected, rtol=1e-5, atol=1e-5)
+        if name.endswith("ttt_conv.weight"):
+            assert loaded.float().norm().item() > 0.0, (
+                f"{name} loaded as zero — _init_weights re-zeroed it after load"
+            )
+
+
 # ---------------------------------------------------------------------------
 # Strict-TTT state hook: snapshot capture and snapshot consumption
 # ---------------------------------------------------------------------------

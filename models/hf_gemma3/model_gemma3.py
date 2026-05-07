@@ -289,6 +289,11 @@ class Gemma3PreTrainedModelTTT(Gemma3PreTrainedModel):
         if isinstance(module, TTTLinear):
             if module.weight.device.type == "meta":
                 return
+            if getattr(module.weight, "_is_hf_initialized", False):
+                if module.bias is not None and not getattr(module.bias, "_is_hf_initialized", False):
+                    torch.nn.init.zeros_(module.bias)
+                return
+
             # Square matrix (ttt_proj is d_model x d_model)
             diag_size = module.weight.shape[0]
             weight_data = module.weight.data
@@ -329,8 +334,9 @@ class Gemma3PreTrainedModelTTT(Gemma3PreTrainedModel):
             return
         if isinstance(module, TTTConv1d):
             # TTT conv: zero init so the TTT branch starts as a no-op perturbation of the frozen base
-            module.weight.data.zero_()
-            if module.bias is not None:
+            if not getattr(module.weight, "_is_hf_initialized", False):
+                module.weight.data.zero_()
+            if module.bias is not None and not getattr(module.bias, "_is_hf_initialized", False):
                 module.bias.data.zero_()
             return
 

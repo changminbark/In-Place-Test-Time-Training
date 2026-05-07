@@ -36,16 +36,8 @@ from ..eval.runner import run_benchmark
 
 
 def load_with_chunk(repo: str, ttt_chunk: int):
-    """Same as gemma3_predictors.load_gemma3_ttt_model but with ttt_chunk override.
-
-    Workaround: transformers' loader silently drops the ttt_conv/ttt_proj
-    checkpoint tensors as UNEXPECTED, even though the model *does* register
-    those parameters. We manually re-load them via load_state_dict(strict=False)
-    after from_pretrained.
-    """
+    """Same as gemma3_predictors.load_gemma3_ttt_model but with ttt_chunk override."""
     from transformers import AutoTokenizer
-    from huggingface_hub import hf_hub_download
-    from safetensors import safe_open
     from models.hf_gemma3.config_gemma3 import Gemma3TTTConfig
 
     cls = build_generate_subclass()
@@ -66,22 +58,6 @@ def load_with_chunk(repo: str, ttt_chunk: int):
     model = cls.from_pretrained(
         repo, config=cfg, token=token, torch_dtype=torch_dtype
     ).to(device).eval()
-
-    # Manually load TTT tensors that the standard loader dropped. Read directly
-    # from the safetensors shard(s) and copy any "ttt_*" key into the model.
-    ckpt_path = hf_hub_download(repo, "model.safetensors", token=token)
-    ttt_state: dict[str, torch.Tensor] = {}
-    with safe_open(ckpt_path, framework="pt") as f:
-        for k in f.keys():
-            if "ttt_proj" in k or "ttt_conv" in k:
-                ttt_state[k] = f.get_tensor(k).to(device=device, dtype=torch_dtype)
-    if ttt_state:
-        result = model.load_state_dict(ttt_state, strict=False)
-        # missing_keys here = all non-TTT keys in the model; that's expected
-        # because we only passed TTT tensors. unexpected_keys should be empty.
-        if result.unexpected_keys:
-            print(f"[load_with_chunk] still-unexpected after manual load: "
-                  f"{result.unexpected_keys[:5]}{'...' if len(result.unexpected_keys) > 5 else ''}")
 
     tok = AutoTokenizer.from_pretrained(repo, token=token)
     return model, tok
@@ -120,9 +96,11 @@ def main() -> None:
         print(f"[info] using --data-root {args.data_root}")
 
     if args.diagnose:
-        # Inspect checkpoint state_dict keys before loading the model. The load
-        # report flagged ttt_proj/ttt_conv as UNEXPECTED — meaning the keys in
-        # the checkpoint don't match what the model expects. Print both sides.
+        # Print the saved config, on-disk TTT key norms, post-load TTT module
+        # norms, and a use_ttt=False baseline at L=8192. Useful for any new
+        # checkpoint to confirm: (a) the TTT modules were trained, (b) the
+        # load preserves them, (c) how much of the ttt_paper accuracy comes
+        # from base-weight drift vs the chunked update.
         from huggingface_hub import hf_hub_download
         from safetensors import safe_open
         import json as _json
@@ -163,12 +141,6 @@ def main() -> None:
         for k in model_ttt_keys[:20]:
             print(f"  MODEL: {k}")
 
-        # Confirm whether the post-load model state_dict actually contains the
-        # TTT keys (it should, since named_modules sees them; if not, the load
-        # report's UNEXPECTED warning is hiding a deeper issue).
-        sd_keys = set(m.state_dict().keys())
-        in_sd = [k for k in model_ttt_keys if k in sd_keys]
-        print(f"\n--- TTT keys present in model.state_dict() post-load: {len(in_sd)}/{len(model_ttt_keys)} ---")
         print("\n--- TTT module weight stats (use_ttt=True) ---")
         for name, mod in m.named_modules():
             if name.endswith(("ttt_conv", "ttt_proj")):
@@ -216,7 +188,9 @@ def main() -> None:
         )
         print(f"\n--- {pred_no_ttt.model_name} @ L={L} (use_ttt=False on same ckpt) ---")
         print(f"  n={s['n']}  acc={s['accuracy']:.3f}")
-        print("  Compare to ttt_paper @ L=8192 = 0.640. Equal -> TTT path is no-op.")
+        print("  Compare to ttt_paper acc on the same task+L: equal => the "
+              "chunked update is contributing nothing and the gap vs base "
+              "Gemma is pure base-weight drift.")
         return
 
     default_max_new = cfg["generation"]["max_new_tokens"]
