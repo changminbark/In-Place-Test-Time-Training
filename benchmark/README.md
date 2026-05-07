@@ -5,7 +5,7 @@ Eval harness for `Gemma 3 1B` (vanilla vs + TTT adapter) on long-context retriev
 - **RULER** (`third_party/RULER`) — synthetic recall and aggregation. Generators run as subprocesses; their output is mapped onto our JSONL schema.
 - **HELMET** (`third_party/HELMET`) — real-world long-context tasks. ICL is HF-datasets backed (no extra download). RAG needs a one-time tarball pull (~4 GB).
 
-Predictors handle in-context / paper-style TTT / strict TTT modes uniformly across both sources.
+Predictors handle in-context / paper-style TTT modes uniformly across both sources.
 
 ## Tasks
 
@@ -37,6 +37,8 @@ All three run on the same example set.
 - `in_context` — prompt = `[doc, q]`. Single forward. Vanilla baseline. (ATTENTION)
 - `ttt_paper` — prompt = `[doc, q]`. Single forward; TTT layers update fast weights chunk-by-chunk during prefill, reset between examples. Matches the paper's RULER eval. (ATTENTION + TTT)
 - `ttt_strict` — two-phase. (1) Ingest: forward over doc only, snapshot per-layer cumulative `ΔW`. (2) Answer: forward over `q` only with the snapshot patched in. Doc absent from answer prompt — fast weights must substitute for context, not aid it. (TTT)
+
+**NOTE**: `StrictTTTPredictor` does not work with the updated HELMET-based evaluation. 
 
 ## Configuration
 
@@ -129,7 +131,7 @@ Results land in `benchmark/results/` (gitignored) — make sure that path isn't 
 ## Adding a predictor
 
 ```python
-from benchmark.eval.predictor import SinglePassPredictor, StrictTTTPredictor
+from benchmark.eval.predictor import SinglePassPredictor
 
 def my_factory(cfg):
     model, tok = load_my_model(...)

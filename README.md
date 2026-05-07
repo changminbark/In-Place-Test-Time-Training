@@ -28,6 +28,8 @@ Three modes, each run on the same example set:
 
 Tasks come from RULER (`vt`, `cwe`, `fwe`) and HELMET ICL/RAG (`helmet_trec_coarse`, `helmet_banking77`, `helmet_nq`, `helmet_hotpotqa`), tested at 1K / 4K / 8K / 16K / 32K context lengths. Metrics: accuracy, peak GPU memory, latency. See [`benchmark/README.md`](benchmark/README.md).
 
+**NOTE**: `StrictTTTPredictor` does not work with the updated HELMET-based evaluation. 
+
 ## Repository layout
 
 ```
