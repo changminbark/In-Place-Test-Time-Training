@@ -59,8 +59,14 @@ train-tinystories: ## Train + push the TinyStories adapter (HF_USER=...)
 train-longalpaca: ## Train + push the LongAlpaca adapter (HF_USER=...)
 	$(PYTHON) -m train.main --dataset longalpaca --hf-user $(HF_USER)
 
-eval: ## Run RULER evaluation
-	$(PYTHON) eval/run_ruler.py
+eval: ## Run benchmark eval pipeline (dev profile; see benchmark/README.md for full)
+	$(PYTHON) -m benchmark.scripts.generate --profile dev
+	$(PYTHON) -m benchmark.scripts.evaluate --profile dev --predictor benchmark.eval.factories:gemma3_in_context_factory
+	$(PYTHON) -m benchmark.scripts.evaluate --profile dev --predictor benchmark.eval.factories:gemma3_ttt_paper_factory
+	$(PYTHON) -m benchmark.scripts.evaluate --profile dev --predictor benchmark.eval.factories:gemma3_ttt_strict_factory
+	$(PYTHON) -m benchmark.scripts.aggregate
+	$(PYTHON) -m benchmark.scripts.report
+	$(PYTHON) -m benchmark.scripts.plot
 
 login-hf: ## Authenticate with HuggingFace Hub
 	$(UV) run huggingface-cli login

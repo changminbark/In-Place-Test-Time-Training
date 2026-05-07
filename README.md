@@ -18,15 +18,15 @@ We **skip continual pretraining entirely** and pretrain the adapter only. The ba
 
 Primary training corpus: **500k samples of `roneneldan/TinyStories`** (short narratives, ~2M total). `Yukang/LongAlpaca-12k` is also supported as a long-context variant — note it caps at **12k samples**, so we run it for 2 epochs by default to compensate.
 
-### Evaluation (NVIDIA RULER protocol)
+### Evaluation
 
-Three configurations, each with a fresh frozen model loaded per question:
+Three modes, each run on the same example set:
 
-- **In-context baseline** — input text prepended to the context; vanilla Gemma3.
-- **In-context + In-Place TTT** — input text prepended to the context; the model also has a pretrained TTT adapter.
-- **In-weights (In-Place TTT only)** — the model processes the input text and updates its fast weights; the question is asked with an empty context, relying entirely on the weight-compressed knowledge.
+- **`in_context`** — vanilla Gemma3; prompt is `[doc, q]`, single forward.
+- **`ttt_paper`** — same `[doc, q]` prompt, but TTT layers update their fast weights chunk-by-chunk during prefill (matches the original paper's eval).
+- **`ttt_strict`** — two-phase: ingest doc only and snapshot the per-layer ΔW, then answer `q` alone with that snapshot patched in. Doc is absent at answer time, so the fast weights must substitute for context.
 
-Tested across 1K / 4K / 8K / 16K / 32K context lengths on RULER tasks (single- and multi-hop NIAH, variable tracking, QA). Metrics: answer accuracy, GPU memory, inference latency, plus a needle-position × accuracy heatmap.
+Tasks come from RULER (`vt`, `cwe`, `fwe`) and HELMET ICL/RAG (`helmet_trec_coarse`, `helmet_banking77`, `helmet_nq`, `helmet_hotpotqa`), tested at 1K / 4K / 8K / 16K / 32K context lengths. Metrics: accuracy, peak GPU memory, latency. See [`benchmark/README.md`](benchmark/README.md).
 
 ## Repository layout
 
@@ -40,8 +40,11 @@ In-Place-Test-Time-Training/
 │   ├── main.py                  # training entry point (frozen base + TTT-adapter pretraining)
 │   ├── test_main.py             # pytest suite: tokenize, freeze, save, wandb, CLI plumbing
 │   └── README.md                # training details, default hyperparameters, Colab walkthrough
-├── benchmark/                   # RULER-style evaluation harness (configs, data_gen, eval, scripts)
-├── third_party/RULER/           # NVIDIA RULER as a git submodule
+├── benchmark/                   # eval harness (configs, data_gen, eval, scripts, results/plots)
+├── scripts/                     # misc utilities (prompt dumping, eval shell helpers)
+├── third_party/
+│   ├── RULER/                   # NVIDIA RULER (submodule)
+│   └── HELMET/                  # Princeton HELMET (submodule)
 ├── Makefile                     # convenience commands (see `make help`)
 ├── pyproject.toml               # deps managed by uv
 ├── LICENSE                      # Apache 2.0
@@ -134,10 +137,16 @@ For manually-built checkpoints, `make push-hub HF_REPO_ID=... CKPT_DIR=...` is s
 ## Evaluation
 
 ```bash
-make eval
+uv run python -m benchmark.scripts.generate --profile dev
+uv run python -m benchmark.scripts.evaluate --profile dev --predictor benchmark.eval.factories:gemma3_in_context_factory
+uv run python -m benchmark.scripts.evaluate --profile dev --predictor benchmark.eval.factories:gemma3_ttt_paper_factory
+uv run python -m benchmark.scripts.evaluate --profile dev --predictor benchmark.eval.factories:gemma3_ttt_strict_factory
+uv run python -m benchmark.scripts.aggregate
+uv run python -m benchmark.scripts.report
+uv run python -m benchmark.scripts.plot
 ```
 
-Runs the RULER-style protocol described above against the three configurations — in-context baseline, in-context + TTT, and in-weights TTT-only — reporting accuracy, GPU memory, and inference latency as a function of context length, plus a needle-position × accuracy heatmap. The harness lives under `benchmark/` (configs, data_gen, eval, scripts) and uses NVIDIA RULER from `third_party/RULER/` as a submodule. See [`benchmark/README.md`](benchmark/README.md) for details.
+Runs the three modes described above and reports accuracy, peak GPU memory, and latency as a function of context length. The harness lives under `benchmark/` (configs, data_gen, eval, scripts) and pulls tasks from NVIDIA RULER and Princeton HELMET (`third_party/`). See [`benchmark/README.md`](benchmark/README.md) for setup, profiles (`dev`/`full`), and how to register new predictors.
 
 ## Make targets
 
@@ -150,7 +159,7 @@ Run `make help` for the full list. Highlights:
 | `make test-slow` | downloads real Gemma3-1B and exercises the load path |
 | `make train DATASET=...` | trains on `tinystories`/`longalpaca` and pushes (`HF_USER=...`) |
 | `make train-tinystories` / `make train-longalpaca` | dataset-specific shortcuts |
-| `make eval` | runs `eval/ruler.py` |
+| `make eval` | runs the benchmark pipeline (see [`benchmark/README.md`](benchmark/README.md)) |
 | `make login-hf` | `huggingface-cli login` |
 | `make push-hub` | upload `$(CKPT_DIR)` to `$(HF_REPO_ID)` |
 | `make clean` | nuke `__pycache__`, `.pytest_cache`, etc. |
@@ -170,6 +179,42 @@ PyTorch, HuggingFace Transformers, NVIDIA RULER, HuggingFace Datasets, Weights &
 - The size of that gap quantifies how much of the paper's reported gains require base-model co-adaptation.
 - A finding of no improvement (or degradation) is itself a meaningful negative result: it would say the base model's adaptation is load-bearing, not just the adapter's learned target.
 
+## Results and Discussion
+
+Full report: [Adapter-Only In-Place Test-Time Training: Isolating the Contribution of Fast-Weight Target Modules in Frozen LLMs](https://docs.google.com/document/d/1dlbFZoXnsHY0ySqQcskGcF4c9CfdM7oXekZFgsyXP3E/edit?tab=t.yntkf9m41rao). Plot sources are under [`benchmark/results/plots/`](benchmark/results/plots/).
+
+After pretraining 2 In-Place Test-Time Training MLP layers on TinyStories (500K samples) and LongAlpaca (2×12K samples), we ran evaluations against the HELMET+RULER inspired benchmark, which excluded LLM-as-a-Judge metrics.
+
+### Accuracy vs. context length
+
+| Common Words Extraction (CWE) | Frequent Words Extraction (FWE) |
+| --- | --- |
+| ![](benchmark/results/plots/may6/accuracy_vs_context__cwe.png) | ![](benchmark/results/plots/may6/accuracy_vs_context__fwe.png) |
+
+| Variable Tracking (VT) | HELMET — Banking77 |
+| --- | --- |
+| ![](benchmark/results/plots/may6/accuracy_vs_context__vt.png) | ![](benchmark/results/plots/may6/accuracy_vs_context__helmet_banking77.png) |
+
+| HELMET — TREC Coarse | |
+| --- | --- |
+| ![](benchmark/results/plots/may6/accuracy_vs_context__helmet_trec_coarse.png) | |
+
+As shown in the plots, on all evaluation tasks the "vanilla" Gemma3 (in-context) outperforms the In-Place TTT Gemma3 models. The one discrepancy to note is that the LongAlpaca-trained model performs better than the vanilla model on the Common Words Extraction (CWE) task at the input context of 8192 tokens. It may be possible that the LongAlpaca dataset is constructed in a way that aligns the In-Place TTT MLP layers to be better at this specific task and context length. This should be investigated further.
+
+### Peak GPU memory and latency
+
+| Peak GPU memory | Mean latency |
+| --- | --- |
+| ![](benchmark/results/plots/may6/peak_memory_vs_context.png) | ![](benchmark/results/plots/may6/latency_vs_context.png) |
+
+In terms of peak GPU memory, the TinyStories model had significantly higher usage compared to the other two models. This is most likely due to the fact that the TinyStories model had a much smaller TTT chunk size (128) compared to the LongAlpaca model's TTT chunk size (2048). The smaller TTT chunk size means the TinyStories model has to create more chunk deltas and updates than the LongAlpaca one, leading to higher GPU memory usage.
+
+Mean latency among the In-Place TTT models is similar and higher than the vanilla model, which makes sense as the new architecture adds more calculations like computing update deltas, aggregating them through cumsum, and then applying them to get the MLP output (see Algorithm 1 in the appendix of the original paper).
+
+### Takeaways
+
+As it stands, pretraining In-Place TTT MLP layers while freezing the base model does not lead to improvement in performance. These findings, however, are limited to just the Gemma3 model, where the In-Place TTT MLP layers were implemented in the global attention layers. Furthermore, pretraining of the In-Place TTT MLP layers was limited (500K samples of TinyStories and 2×12K samples of LongAlpaca) due to resource constraints. To retain or improve performance, it may be necessary to pretrain the In-Place TTT MLP layers on bigger and better datasets, and possibly to train the base model jointly (rather than freezing it).
+
 ## Licensing
 
 Modeling code is Apache 2.0. See `LICENSE` and `NOTICE` for full attribution to HuggingFace Transformers (Apache 2.0), Google (Gemma 3 architecture and weights, subject to the Gemma Terms of Use), and the Bytedance In-Place TTT reference implementation (Apache 2.0).
@@ -182,7 +227,7 @@ CSCI357 (Spring 2026) — AI with Neural Nets
 
 Professor Brian King
 
-April 21, 2026
+May 6, 2026
 
 ## AI Usage
-AI tools like Claude Code were used to write documentation and parts of the code like Makefiles and tests.
+AI tools like Claude Code were used to write documentation and parts of the code.
