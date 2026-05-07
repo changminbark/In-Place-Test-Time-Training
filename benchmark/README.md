@@ -61,6 +61,15 @@ Result row: `example_id`, `task`, `mode`, `model_name`, `context_length_target`,
 make install                              # uv sync + submodule + nltk + PG essays
 echo 'HF_TOKEN=hf_xxx' > .env             # accept Gemma license at HF first
 
+# RULER's cwe task needs english_words.json (8.5 MB, stored via Git LFS).
+# Install LFS once and pull, otherwise cwe generation crashes with a JSON
+# decode error.
+sudo apt-get install -y git-lfs && git lfs install
+git -C third_party/RULER lfs pull
+# Alternative if you can't install lfs:
+# curl -L https://media.githubusercontent.com/media/NVIDIA/RULER/main/scripts/data/synthetic/json/english_words.json \
+#   -o third_party/RULER/scripts/data/synthetic/json/english_words.json
+
 # HELMET RAG only — ~4 GB, populates third_party/HELMET/data/kilt/
 bash third_party/HELMET/scripts/download_data.sh
 # (or set HELMET_DATA_DIR=/path/to/helmet/data and download there)

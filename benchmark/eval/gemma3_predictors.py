@@ -119,6 +119,26 @@ def load_gemma3_ttt_model(
     model = cls.from_pretrained(
         repo_or_path, config=cfg, token=token, torch_dtype=torch_dtype
     ).to(device).eval()
+
+    # An all-zero ttt_conv means the chunked-update path is mathematically a
+    # no-op (Δ = einsum(z, conv(t)=0, ttt_proj) = 0), so any "TTT" benchmark
+    # numbers would only be measuring base-weight drift. The model fix in
+    # `_init_weights` ensures from_pretrained preserves loaded values; this
+    # guard catches checkpoints where the on-disk values themselves are zero
+    # (training never updated them).
+    if use_ttt:
+        ttt_conv_norms = {
+            name: p.float().norm().item()
+            for name, p in model.named_parameters()
+            if name.endswith("ttt_conv.weight")
+        }
+        if ttt_conv_norms and max(ttt_conv_norms.values()) == 0.0:
+            raise RuntimeError(
+                f"TTT load sanity check failed for {repo_or_path}: every "
+                f"ttt_conv.weight has L2=0. Checkpoint was likely saved before "
+                f"training updated these weights. Per-layer norms: {ttt_conv_norms}"
+            )
+
     tokenizer = AutoTokenizer.from_pretrained(repo_or_path, token=token)
     return model, tokenizer
 

@@ -26,6 +26,7 @@ dependencies = [
     "tenacity>=8.5",
     "scipy>=1.17.1",
     "accelerate>=1.13.0",
+    "matplotlib>=3.10.9",
 ]
 
 [dependency-groups]
